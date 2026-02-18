@@ -1,113 +1,152 @@
 # ============================================================================
-# ПОТЕРЯННЫЕ ЗЕМЛИ — TELEGRAM БОТ (Railway версия)
+# ПОТЕРЯННЫЕ ЗЕМЛИ — ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ВЕРСИЯ
 # ============================================================================
 import os
 import sqlite3
 import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram import F
 import asyncio
 
-# Получаем токен из переменной окружения Railway
+# Токен из переменной окружения
 API_TOKEN = os.environ.get('BOT_TOKEN')
-
 if not API_TOKEN:
-    raise ValueError("❌ BOT_TOKEN не найден! Добавьте его в переменные окружения Railway.")
+    raise ValueError("❌ BOT_TOKEN не найден!")
 
-# Инициализация
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Состояния для конечного автомата
+# Состояния FSM
 class GameStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_class = State()
     choosing_action = State()
-    choosing_hero = State()
-    upgrading_stat = State()
-    choosing_floor = State()
-    waiting_dice = State()
+    choosing_hero_to_upgrade = State()
+    choosing_stat_to_upgrade = State()
+    choosing_battle_type = State()
+    choosing_opponent = State()
+    waiting_attacker_dice = State()
+    waiting_defender_dice = State()
+    waiting_monster_dice = State()
+
+# Классы персонажей
+CLASSES = {
+    "Воин": {
+        "hp_bonus": 20,
+        "atk_bonus": 3,
+        "arm_bonus": 2,
+        "agi_bonus": 0,
+        "description": "🛡️ Высокая живучесть и защита",
+        "emoji": "⚔️"
+    },
+    "Маг": {
+        "hp_bonus": -10,
+        "atk_bonus": 5,
+        "arm_bonus": -1,
+        "agi_bonus": 1,
+        "description": "🔮 Сильная атака, но хрупкий",
+        "emoji": "🧙"
+    },
+    "Разбойник": {
+        "hp_bonus": 0,
+        "atk_bonus": 2,
+        "arm_bonus": 0,
+        "agi_bonus": 3,
+        "description": "🏃 Высокая ловкость, критические удары",
+        "emoji": "🗡️"
+    },
+    "Паладин": {
+        "hp_bonus": 15,
+        "atk_bonus": 1,
+        "arm_bonus": 3,
+        "agi_bonus": -1,
+        "description": "🛡️⚔️ Сбалансированный защитник",
+        "emoji": "🛡️"
+    },
+    "Стрелок": {
+        "hp_bonus": -5,
+        "atk_bonus": 4,
+        "arm_bonus": -1,
+        "agi_bonus": 2,
+        "description": "🏹 Дальний бой, высокий урон",
+        "emoji": "🏹"
+    },
+    "Друид": {
+        "hp_bonus": 10,
+        "atk_bonus": 2,
+        "arm_bonus": 1,
+        "agi_bonus": 1,
+        "description": "🌿 Природная магия и выносливость",
+        "emoji": "🌿"
+    }
+}
 
 # Инициализация базы данных
 def init_db():
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
+    
+    # Таблица игроков (привязка к Telegram ID)
     cur.execute('''
         CREATE TABLE IF NOT EXISTS players (
-            user_id INTEGER PRIMARY KEY,
-            hero1_name TEXT DEFAULT 'Герой1',
-            hero1_lvl INTEGER DEFAULT 1,
-            hero1_exp INTEGER DEFAULT 0,
-            hero1_skill_points INTEGER DEFAULT 0,
-            hero1_max_hp INTEGER DEFAULT 100,
-            hero1_hp INTEGER DEFAULT 100,
-            hero1_atk INTEGER DEFAULT 10,
-            hero1_arm INTEGER DEFAULT 5,
-            hero1_agi INTEGER DEFAULT 5,
-            hero2_name TEXT DEFAULT 'Герой2',
-            hero2_lvl INTEGER DEFAULT 1,
-            hero2_exp INTEGER DEFAULT 0,
-            hero2_skill_points INTEGER DEFAULT 0,
-            hero2_max_hp INTEGER DEFAULT 100,
-            hero2_hp INTEGER DEFAULT 100,
-            hero2_atk INTEGER DEFAULT 10,
-            hero2_arm INTEGER DEFAULT 5,
-            hero2_agi INTEGER DEFAULT 5,
-            hero3_name TEXT DEFAULT 'Герой3',
-            hero3_lvl INTEGER DEFAULT 1,
-            hero3_exp INTEGER DEFAULT 0,
-            hero3_skill_points INTEGER DEFAULT 0,
-            hero3_max_hp INTEGER DEFAULT 100,
-            hero3_hp INTEGER DEFAULT 100,
-            hero3_atk INTEGER DEFAULT 10,
-            hero3_arm INTEGER DEFAULT 5,
-            hero3_agi INTEGER DEFAULT 5,
-            hero4_name TEXT DEFAULT 'Герой4',
-            hero4_lvl INTEGER DEFAULT 1,
-            hero4_exp INTEGER DEFAULT 0,
-            hero4_skill_points INTEGER DEFAULT 0,
-            hero4_max_hp INTEGER DEFAULT 100,
-            hero4_hp INTEGER DEFAULT 100,
-            hero4_atk INTEGER DEFAULT 10,
-            hero4_arm INTEGER DEFAULT 5,
-            hero4_agi INTEGER DEFAULT 5,
-            hero5_name TEXT DEFAULT 'Герой5',
-            hero5_lvl INTEGER DEFAULT 1,
-            hero5_exp INTEGER DEFAULT 0,
-            hero5_skill_points INTEGER DEFAULT 0,
-            hero5_max_hp INTEGER DEFAULT 100,
-            hero5_hp INTEGER DEFAULT 100,
-            hero5_atk INTEGER DEFAULT 10,
-            hero5_arm INTEGER DEFAULT 5,
-            hero5_agi INTEGER DEFAULT 5,
-            hero6_name TEXT DEFAULT 'Герой6',
-            hero6_lvl INTEGER DEFAULT 1,
-            hero6_exp INTEGER DEFAULT 0,
-            hero6_skill_points INTEGER DEFAULT 0,
-            hero6_max_hp INTEGER DEFAULT 100,
-            hero6_hp INTEGER DEFAULT 100,
-            hero6_atk INTEGER DEFAULT 10,
-            hero6_arm INTEGER DEFAULT 5,
-            hero6_agi INTEGER DEFAULT 5,
-            current_hero INTEGER DEFAULT 1
+            telegram_id INTEGER PRIMARY KEY,
+            username TEXT,
+            hero_slot INTEGER,  -- 1-6
+            hero_name TEXT,
+            hero_class TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            skill_points INTEGER DEFAULT 0,
+            max_hp INTEGER DEFAULT 100,
+            current_hp INTEGER DEFAULT 100,
+            attack INTEGER DEFAULT 10,
+            armor INTEGER DEFAULT 5,
+            agility INTEGER DEFAULT 5,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
+    # Таблица монстров
     cur.execute('''
         CREATE TABLE IF NOT EXISTS monsters (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             floor INTEGER,
             name TEXT,
-            lvl INTEGER,
+            level INTEGER,
             hp INTEGER,
-            atk INTEGER,
-            arm INTEGER,
-            agi INTEGER,
-            exp INTEGER
+            attack INTEGER,
+            armor INTEGER,
+            agility INTEGER,
+            exp_reward INTEGER
         )
     ''')
-    # Заполняем монстров (20 штук)
+    
+    # Таблица боёв (для PvP)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attacker_id INTEGER,
+            defender_id INTEGER,
+            attacker_dice INTEGER,
+            defender_dice INTEGER,
+            attacker_damage INTEGER,
+            defender_damage INTEGER,
+            attacker_hp_after INTEGER,
+            defender_hp_after INTEGER,
+            winner_id INTEGER,
+            battle_type TEXT,  -- 'pvp' or 'pve'
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Заполнение монстров
     cur.execute('SELECT COUNT(*) FROM monsters')
     if cur.fetchone()[0] == 0:
         monsters = [
@@ -132,514 +171,754 @@ def init_db():
             (5, 'Архидемон', 13, 900, 55, 40, 22, 1700),
             (5, 'Титан', 15, 1200, 60, 45, 25, 2000)
         ]
-        cur.executemany('INSERT INTO monsters (floor, name, lvl, hp, atk, arm, agi, exp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', monsters)
+        cur.executemany('INSERT INTO monsters (floor, name, level, hp, attack, armor, agility, exp_reward) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', monsters)
+    
     conn.commit()
     conn.close()
 
 # Получение данных игрока
-def get_player(user_id):
+def get_player(telegram_id):
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
-    cur.execute('SELECT * FROM players WHERE user_id = ?', (user_id,))
+    cur.execute('SELECT * FROM players WHERE telegram_id = ?', (telegram_id,))
     row = cur.fetchone()
-    if not row:
-        # Создаём нового игрока
-        cur.execute('INSERT INTO players (user_id) VALUES (?)', (user_id,))
-        conn.commit()
-        cur.execute('SELECT * FROM players WHERE user_id = ?', (user_id,))
-        row = cur.fetchone()
     conn.close()
     return row
 
+# Создание нового игрока
+def create_player(telegram_id, username, hero_slot, hero_name, hero_class):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    
+    # Проверка: не превышено ли 6 игроков
+    cur.execute('SELECT COUNT(*) FROM players')
+    if cur.fetchone()[0] >= 6:
+        conn.close()
+        return False, "❌ В игре уже 6 игроков! Максимум достигнут."
+    
+    # Проверка: имя не занято
+    cur.execute('SELECT hero_name FROM players WHERE hero_name = ?', (hero_name,))
+    if cur.fetchone():
+        conn.close()
+        return False, f"❌ Имя '{hero_name}' уже занято! Выберите другое."
+    
+    # Проверка: слот не занят
+    cur.execute('SELECT hero_slot FROM players WHERE hero_slot = ?', (hero_slot,))
+    if cur.fetchone():
+        conn.close()
+        return False, f"❌ Слот {hero_slot} уже занят!"
+    
+    # Бонусы класса
+    cls = CLASSES[hero_class]
+    
+    cur.execute('''
+        INSERT INTO players 
+        (telegram_id, username, hero_slot, hero_name, hero_class, 
+         max_hp, current_hp, attack, armor, agility)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        telegram_id, username, hero_slot, hero_name, hero_class,
+        100 + cls['hp_bonus'],
+        100 + cls['hp_bonus'],
+        10 + cls['atk_bonus'],
+        5 + cls['arm_bonus'],
+        5 + cls['agi_bonus']
+    ))
+    
+    conn.commit()
+    conn.close()
+    return True, "✅ Персонаж создан!"
+
 # Обновление данных игрока
-def update_player(user_id, **kwargs):
+def update_player(telegram_id, **kwargs):
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     set_clause = ', '.join([f"{k} = ?" for k in kwargs.keys()])
-    values = list(kwargs.values()) + [user_id]
-    cur.execute(f'UPDATE players SET {set_clause} WHERE user_id = ?', values)
+    values = list(kwargs.values()) + [telegram_id]
+    cur.execute(f'UPDATE players SET {set_clause} WHERE telegram_id = ?', values)
     conn.commit()
     conn.close()
 
-# Расчёт урона
-def calculate_damage(atk, arm, dice):
-    base = max(1, atk - arm * 0.7)
-    return max(1, round(base + (dice - 10)))
+# Получение всех игроков
+def get_all_players():
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM players ORDER BY hero_slot')
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+# Получение свободных слотов
+def get_free_slots():
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('SELECT hero_slot FROM players')
+    occupied = {row[0] for row in cur.fetchall()}
+    conn.close()
+    return [i for i in range(1, 7) if i not in occupied]
+
+# Получение монстра по имени
+def get_monster(name):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM monsters WHERE name = ?', (name,))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+# Расчёт урона с учётом ВСЕХ характеристик
+def calculate_damage(attacker_atk, attacker_agi, defender_arm, defender_agi, dice_roll):
+    """
+    Формула урона:
+    - Базовый урон: (Атака - Броня * 0.7)
+    - Модификатор ловкости: (Ловкость_атакующего - Ловкость_защитника) * 0.3
+    - Кубик: (Бросок - 10) * 1.5
+    - Итого: базовый + модификатор_ловкости + кубик
+    """
+    base_damage = max(1, attacker_atk - defender_arm * 0.7)
+    agility_mod = (attacker_agi - defender_agi) * 0.3
+    dice_mod = (dice_roll - 10) * 1.5
+    
+    total = base_damage + agility_mod + dice_mod
+    return max(1, round(total))
+
+# Клавиатуры
+def get_main_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⚔️ Бой")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True
+    )
+
+def get_class_keyboard():
+    buttons = []
+    for cls_name, cls_data in CLASSES.items():
+        buttons.append([KeyboardButton(text=f"{cls_data['emoji']} {cls_name}")])
+    buttons.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_battle_type_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⚔️ Герой vs Герой")],
+            [KeyboardButton(text="👹 Герой vs Монстр")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+def get_free_slots_keyboard():
+    slots = get_free_slots()
+    if not slots:
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="🔙 Назад")]],
+            resize_keyboard=True
+        )
+    
+    buttons = [[KeyboardButton(text=f"Слот {slot}")] for slot in slots]
+    buttons.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_opponent_keyboard(exclude_telegram_id=None):
+    players = get_all_players()
+    buttons = []
+    
+    for player in players:
+        if exclude_telegram_id and player[0] == exclude_telegram_id:
+            continue
+        buttons.append([KeyboardButton(text=f"{player[3]} ({player[4]})")])
+    
+    if not buttons:
+        buttons = [[KeyboardButton(text="Нет доступных противников")]]
+    
+    buttons.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_monster_keyboard(floor=None):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    
+    if floor:
+        cur.execute('SELECT name FROM monsters WHERE floor = ? ORDER BY level', (floor,))
+    else:
+        cur.execute('SELECT DISTINCT floor FROM monsters ORDER BY floor')
+        floors = [f"Этаж {row[0]}" for row in cur.fetchall()]
+        conn.close()
+        buttons = [[KeyboardButton(text=floor)] for floor in floors]
+        buttons.append([KeyboardButton(text="🔙 Назад")])
+        return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    
+    monsters = [row[0] for row in cur.fetchall()]
+    conn.close()
+    
+    buttons = []
+    for i in range(0, len(monsters), 2):
+        row = [KeyboardButton(text=monsters[i])]
+        if i + 1 < len(monsters):
+            row.append(KeyboardButton(text=monsters[i + 1]))
+        buttons.append(row)
+    
+    buttons.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # ОСНОВНЫЕ КОМАНДЫ
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    player = get_player(user_id)
+    telegram_id = message.from_user.id
+    player = get_player(telegram_id)
     
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")],
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="❓ Помощь")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    
-    await message.answer(
-        "🌍 Добро пожаловать в Потерянные земли!\n\n"
-        "🎲 Настольная RPG с физическими кубиками d20\n"
-        "🧙 Управляйте 6 героями, прокачивайте навыки\n"
-        "👹 Сражайтесь с монстрами 5 этажей подземелья\n"
-        "⚔️ PvP-бои с друзьями\n\n"
-        "Выберите действие:",
-        reply_markup=kb
-    )
-    await state.set_state(GameStates.choosing_action)
+    if player:
+        # Игрок уже создан
+        await show_character(message, player)
+        await state.set_state(GameStates.choosing_action)
+    else:
+        # Создание нового персонажа
+        free_slots = get_free_slots()
+        
+        if not free_slots:
+            await message.answer(
+                "❌ Извините, в игре уже 6 игроков!\n"
+                "Дождитесь, пока кто-то освободит слот.",
+                reply_markup=get_main_keyboard()
+            )
+            return
+        
+        await message.answer(
+            "🎮 Добро пожаловать в Потерянные земли!\n\n"
+            f"👥 В игре сейчас {6 - len(free_slots)}/6 игроков\n\n"
+            "Создайте своего персонажа:\n"
+            "1️⃣ Выберите свободный слот (1-6)\n"
+            "2️⃣ Введите имя персонажа (уникальное)\n"
+            "3️⃣ Выберите класс\n\n"
+            "Выберите слот:",
+            reply_markup=get_free_slots_keyboard()
+        )
+        await state.set_state(GameStates.waiting_for_name)
 
-# МЕНЮ ПЕРСОНАЖЕЙ
-@dp.message(lambda m: m.text == "🧙 Персонажи")
-async def characters_menu(message: types.Message, state: FSMContext):
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="1️⃣ Герой 1"), KeyboardButton(text="2️⃣ Герой 2"), KeyboardButton(text="3️⃣ Герой 3")],
-            [KeyboardButton(text="4️⃣ Герой 4"), KeyboardButton(text="5️⃣ Герой 5"), KeyboardButton(text="6️⃣ Герой 6")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    await message.answer("Выберите героя для просмотра/прокачки:", reply_markup=kb)
-    await state.set_state(GameStates.choosing_hero)
-
-# ВЫБОР ГЕРОЯ
-@dp.message(GameStates.choosing_hero)
-async def select_hero(message: types.Message, state: FSMContext):
+@dp.message(GameStates.waiting_for_name)
+async def process_slot_selection(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
         await start(message, state)
         return
     
     try:
-        hero_num = int(message.text.split()[0].replace('️⃣', ''))
+        slot = int(message.text.split()[1])
+        if slot not in get_free_slots():
+            raise ValueError
     except:
-        await message.answer("❌ Выберите героя из меню!")
+        await message.answer("❌ Выберите слот из списка!", reply_markup=get_free_slots_keyboard())
         return
     
-    user_id = message.from_user.id
-    player = get_player(user_id)
-    
-    # Индексы для героя (начинаются с 1)
-    idx = {
-        1: (1, 2, 3, 4, 5, 6, 7, 8, 9),
-        2: (10,11,12,13,14,15,16,17,18),
-        3: (19,20,21,22,23,24,25,26,27),
-        4: (28,29,30,31,32,33,34,35,36),
-        5: (37,38,39,40,41,42,43,44,45),
-        6: (46,47,48,49,50,51,52,53,54)
-    }[hero_num]
-    
-    name = player[idx[0]]
-    lvl = player[idx[1]]
-    exp = player[idx[2]]
-    skill_points = player[idx[3]]
-    max_hp = player[idx[4]]
-    hp = player[idx[5]]
-    atk = player[idx[6]]
-    arm = player[idx[7]]
-    agi = player[idx[8]]
-    
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=f"❤️ Здоровье ({max_hp})"), KeyboardButton(text=f"⚔️ Атака ({atk})")],
-            [KeyboardButton(text=f"🛡️ Броня ({arm})"), KeyboardButton(text=f"🏃 Ловкость ({agi})")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
+    await state.update_data(hero_slot=slot)
+    await message.answer(
+        f"✅ Выбран слот {slot}\n\n"
+        "📝 Введите имя персонажа (латиницей или кириллицей, без пробелов):"
     )
+    await state.set_state(GameStates.waiting_for_class)
+
+@dp.message(GameStates.waiting_for_class)
+async def process_name(message: types.Message, state: FSMContext):
+    hero_name = message.text.strip()
+    
+    if len(hero_name) < 3 or len(hero_name) > 20:
+        await message.answer("❌ Имя должно быть от 3 до 20 символов!")
+        return
+    
+    # Проверка на уникальность (временно, до создания)
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('SELECT hero_name FROM players WHERE hero_name = ?', (hero_name,))
+    if cur.fetchone():
+        conn.close()
+        await message.answer("❌ Это имя уже занято! Введите другое:")
+        return
+    conn.close()
+    
+    await state.update_data(hero_name=hero_name)
+    
+    # Показать классы
+    classes_text = "🎭 Выберите класс персонажа:\n\n"
+    for cls_name, cls_data in CLASSES.items():
+        classes_text += f"{cls_data['emoji']} **{cls_name}**\n"
+        classes_text += f"   {cls_data['description']}\n"
+        classes_text += f"   Бонусы: "
+        bonuses = []
+        if cls_data['hp_bonus'] != 0:
+            bonuses.append(f"HP {'+' if cls_data['hp_bonus'] > 0 else ''}{cls_data['hp_bonus']}")
+        if cls_data['atk_bonus'] != 0:
+            bonuses.append(f"ATK {'+' if cls_data['atk_bonus'] > 0 else ''}{cls_data['atk_bonus']}")
+        if cls_data['arm_bonus'] != 0:
+            bonuses.append(f"ARM {'+' if cls_data['arm_bonus'] > 0 else ''}{cls_data['arm_bonus']}")
+        if cls_data['agi_bonus'] != 0:
+            bonuses.append(f"AGI {'+' if cls_data['agi_bonus'] > 0 else ''}{cls_data['agi_bonus']}")
+        classes_text += ", ".join(bonuses) + "\n\n"
     
     await message.answer(
-        f"🧙‍♂️ Герой: {name}\n"
-        f"📊 Уровень: {lvl} | Опыт: {exp}/{lvl * 100}\n"
-        f"⭐ Очки навыков: {skill_points}\n"
-        f"❤️ Здоровье: {hp}/{max_hp}\n"
-        f"⚔️ Атака: {atk}\n"
-        f"🛡️ Броня: {arm}\n"
-        f"🏃 Ловкость: {agi}\n\n"
-        "Выберите параметр для прокачки:",
-        reply_markup=kb
+        classes_text,
+        reply_markup=get_class_keyboard(),
+        parse_mode="Markdown"
     )
-    await state.update_data(hero_num=hero_num, skill_points=skill_points)
-    await state.set_state(GameStates.upgrading_stat)
+    await state.set_state(GameStates.waiting_for_class)
 
-# ПРОКАЧКА ПАРАМЕТРА
-@dp.message(GameStates.upgrading_stat)
-async def upgrade_stat(message: types.Message, state: FSMContext):
+@dp.message(GameStates.waiting_for_class)
+async def process_class_selection(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
-        await characters_menu(message, state)
+        await start(message, state)
+        return
+    
+    # Извлекаем имя класса из кнопки (удаляем эмодзи)
+    class_text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else message.text
+    
+    if class_text not in CLASSES:
+        await message.answer("❌ Выберите класс из списка!", reply_markup=get_class_keyboard())
         return
     
     data = await state.get_data()
-    hero_num = data['hero_num']
-    skill_points = data['skill_points']
+    hero_slot = data['hero_slot']
+    hero_name = data['hero_name']
+    hero_class = class_text
     
-    if skill_points <= 0:
-        await message.answer("❌ Нет очков навыков!\nПобедите монстров, чтобы получить опыт и повысить уровень.", 
-                           reply_markup=ReplyKeyboardMarkup(
-                               keyboard=[[KeyboardButton(text="⚔️ Бой")]],
-                               resize_keyboard=True
-                           ))
-        return
+    telegram_id = message.from_user.id
+    username = message.from_user.username or f"user_{telegram_id}"
     
-    stat_text = message.text.split()[0]
+    # Создаём персонажа
+    success, msg = create_player(telegram_id, username, hero_slot, hero_name, hero_class)
     
-    stat_map = {
-        "❤️": ("max_hp", 5, "Здоровье"),
-        "⚔️": ("atk", 2, "Атака"),
-        "🛡️": ("arm", 1, "Броня"),
-        "🏃": ("agi", 1, "Ловкость")
-    }
-    
-    if stat_text not in stat_map:
-        await message.answer("❌ Выберите параметр из меню!")
-        return
-    
-    stat_name_db, bonus, stat_name_ru = stat_map[stat_text]
-    
-    # Индексы для обновления БД
-    idx = {
-        1: {"max_hp": 5, "hp": 6, "atk": 7, "arm": 8, "agi": 9, "skill_points": 4},
-        2: {"max_hp": 14, "hp": 15, "atk": 16, "arm": 17, "agi": 18, "skill_points": 13},
-        3: {"max_hp": 23, "hp": 24, "atk": 25, "arm": 26, "agi": 27, "skill_points": 22},
-        4: {"max_hp": 32, "hp": 33, "atk": 34, "arm": 35, "agi": 36, "skill_points": 31},
-        5: {"max_hp": 41, "hp": 42, "atk": 43, "arm": 44, "agi": 45, "skill_points": 40},
-        6: {"max_hp": 50, "hp": 51, "atk": 52, "arm": 53, "agi": 54, "skill_points": 49}
-    }[hero_num]
-    
-    user_id = message.from_user.id
-    player = get_player(user_id)
-    
-    # Обновляем параметр
-    current_val = player[idx[stat_name_db]]
-    update_player(user_id, **{
-        list(idx.keys())[list(idx.values()).index(idx[stat_name_db])]: current_val + bonus,
-        "skill_points": player[idx["skill_points"]] - 1
-    })
-    
-    # Если здоровье — обновляем текущее тоже
-    if stat_name_db == "max_hp":
-        update_player(user_id, **{
-            list(idx.keys())[list(idx.values()).index(idx["hp"])]: player[idx["hp"]] + bonus
-        })
-    
-    await message.answer(
-        f"✅ Прокачано!\n"
-        f"+{bonus} к {stat_name_ru}\n\n"
-        f"⭐ Осталось очков навыков: {skill_points - 1}",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]
-            ],
-            resize_keyboard=True
-        )
-    )
-    await state.set_state(GameStates.choosing_action)
+    if success:
+        player = get_player(telegram_id)
+        await show_character(message, player)
+        await state.set_state(GameStates.choosing_action)
+    else:
+        await message.answer(msg, reply_markup=get_free_slots_keyboard())
+        await state.set_state(GameStates.waiting_for_name)
 
-# МЕНЮ БОЯ
-@dp.message(lambda m: m.text == "⚔️ Бой")
+async def show_character(message: types.Message, player):
+    cls = CLASSES[player[4]]
+    stats_text = (
+        f"👤 **{player[3]}** {cls['emoji']}\n"
+        f"🎭 Класс: {player[4]}\n"
+        f"📊 Уровень: {player[5]} | Опыт: {player[6]}/{player[5] * 100}\n"
+        f"⭐ Очков навыков: {player[7]}\n\n"
+        f"❤️ Здоровье: {player[9]}/{player[8]}\n"
+        f"⚔️ Атака: {player[10]}\n"
+        f"🛡️ Броня: {player[11]}\n"
+        f"🏃 Ловкость: {player[12]}\n\n"
+        f"🏆 Побед: {player[13]} | Поражений: {player[14]}"
+    )
+    
+    await message.answer(stats_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+@dp.message(F.text == "👤 Мой персонаж")
+async def my_character(message: types.Message):
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Вы не создали персонажа! Напишите /start")
+        return
+    
+    await show_character(message, player)
+
+@dp.message(F.text == "⚔️ Бой")
 async def battle_menu(message: types.Message, state: FSMContext):
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="1️⃣ Этаж 1"), KeyboardButton(text="2️⃣ Этаж 2"), KeyboardButton(text="3️⃣ Этаж 3")],
-            [KeyboardButton(text="4️⃣ Этаж 4"), KeyboardButton(text="5️⃣ Этаж 5")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Вы не создали персонажа! Напишите /start")
+        return
+    
     await message.answer(
-        "⚔️ Выберите этаж для боя:\n\n"
-        "1️⃣ Этаж 1: Гоблины, Крысы, Скелеты, Пауки\n"
-        "2️⃣ Этаж 2: Орки, Тролли, Гарпии, Зомби\n"
-        "3️⃣ Этаж 3: Минотавры, Вампиры, Грифоны, Элементали\n"
-        "4️⃣ Этаж 4: Циклопы, Медузы, Демоны, Личи\n"
-        "5️⃣ Этаж 5: Драконы, Гидры, Архидемоны, Титаны",
-        reply_markup=kb
+        "⚔️ ВЫБЕРИТЕ ТИП БОЯ:\n\n"
+        "⚔️ **Герой vs Герой** — PvP бой с другим игроком\n"
+        "👹 **Герой vs Монстр** — PvE бой с монстром подземелья",
+        parse_mode="Markdown",
+        reply_markup=get_battle_type_keyboard()
     )
-    await state.set_state(GameStates.choosing_floor)
+    await state.set_state(GameStates.choosing_battle_type)
 
-# НАЧАЛО БОЯ С МОНСТРОМ
-@dp.message(GameStates.choosing_floor)
-async def start_battle(message: types.Message, state: FSMContext):
+@dp.message(GameStates.choosing_battle_type)
+async def choose_battle_type(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
-        await start(message, state)
+        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+        await state.set_state(GameStates.choosing_action)
         return
     
-    try:
-        floor = int(message.text.split()[0].replace('️⃣', ''))
-    except:
-        await message.answer("❌ Выберите этаж из меню!")
-        return
-    
-    user_id = message.from_user.id
-    
-    # Выбираем случайного монстра этажа
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute('SELECT * FROM monsters WHERE floor = ? ORDER BY RANDOM() LIMIT 1', (floor,))
-    monster = cur.fetchone()
-    conn.close()
-    
-    if not monster:
-        await message.answer("❌ На этом этаже нет монстров!")
-        return
-    
-    # Загружаем данные текущего героя игрока (используем Герой1 для простоты)
-    player = get_player(user_id)
-    
-    # Берём Герой1 (индексы 1-9)
-    hero_name = player[1]
-    hero_lvl = player[2]
-    hero_hp = player[6]
-    hero_atk = player[7]
-    hero_arm = player[8]
-    hero_agi = player[9]
-    
-    monster_name = monster[2]
-    monster_lvl = monster[3]
-    monster_hp = monster[4]
-    monster_atk = monster[5]
-    monster_arm = monster[6]
-    monster_agi = monster[7]
-    monster_exp = monster[8]
-    
-    # Сохраняем состояние боя
-    await state.update_data(
-        hero_name=hero_name,
-        hero_lvl=hero_lvl,
-        hero_hp=hero_hp,
-        hero_atk=hero_atk,
-        hero_arm=hero_arm,
-        hero_agi=hero_agi,
-        monster_name=monster_name,
-        monster_lvl=monster_lvl,
-        monster_hp=monster_hp,
-        monster_atk=monster_atk,
-        monster_arm=monster_arm,
-        monster_agi=monster_agi,
-        monster_exp=monster_exp,
-        floor=floor
-    )
-    
-    await message.answer(
-        f"⚔️ БОЙ НАЧАТ!\n"
-        f"{'='*30}\n"
-        f"🧙 {hero_name} (ур. {hero_lvl})\n"
-        f"❤️ Здоровье: {hero_hp}\n"
-        f"⚔️ Атака: {hero_atk} | 🛡️ Броня: {hero_arm}\n"
-        f"🏃 Ловкость: {hero_agi}\n\n"
-        f"👹 {monster_name} (ур. {monster_lvl})\n"
-        f"❤️ Здоровье: {monster_hp}\n"
-        f"⚔️ Атака: {monster_atk} | 🛡️ Броня: {monster_arm}\n"
-        f"🏃 Ловкость: {monster_agi}\n"
-        f"{'='*30}\n\n"
-        f"🎲 КИНЬТЕ КУБИК d20!\n"
-        f"Введите результат броска (число от 1 до 20):",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="🔙 Назад")]],
-            resize_keyboard=True,
-            one_time_keyboard=False
+    if message.text == "⚔️ Герой vs Герой":
+        await message.answer(
+            "👥 ВЫБЕРИТЕ ПРОТИВНИКА:\n"
+            "(вы не можете выбрать себя)",
+            reply_markup=get_opponent_keyboard(exclude_telegram_id=message.from_user.id)
         )
-    )
-    await state.set_state(GameStates.waiting_dice)
+        await state.set_state(GameStates.choosing_opponent)
+        await state.update_data(battle_type="pvp")
+    
+    elif message.text == "👹 Герой vs Монстр":
+        await message.answer(
+            "🏰 ВЫБЕРИТЕ ЭТАЖ ПОДЗЕМЕЛЬЯ:",
+            reply_markup=get_monster_keyboard()
+        )
+        await state.set_state(GameStates.choosing_opponent)
+        await state.update_data(battle_type="pve")
+    
+    else:
+        await message.answer("❌ Выберите тип боя из меню!")
 
-# ОБРАБОТКА БРОСКА КУБИКА
-@dp.message(GameStates.waiting_dice)
-async def process_dice(message: types.Message, state: FSMContext):
+@dp.message(GameStates.choosing_opponent)
+async def choose_opponent(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
-        await start(message, state)
+        await battle_menu(message, state)
         return
     
+    data = await state.get_data()
+    battle_type = data.get('battle_type')
+    
+    if battle_type == "pvp":
+        # PvP: выбираем игрока
+        opponent_name = message.text.split(' (')[0]
+        opponent = None
+        
+        for player in get_all_players():
+            if player[3] == opponent_name:
+                opponent = player
+                break
+        
+        if not opponent:
+            await message.answer("❌ Противник не найден! Выберите из списка.")
+            return
+        
+        # Проверка: не сам с собой
+        if opponent[0] == message.from_user.id:
+            await message.answer("❌ Вы не можете сражаться с самим собой!")
+            return
+        
+        # Сохраняем данные боя
+        attacker = get_player(message.from_user.id)
+        await state.update_data(
+            attacker=attacker,
+            defender=opponent,
+            opponent_name=opponent_name
+        )
+        
+        await message.answer(
+            f"⚔️ БОЙ НАЧАТ!\n"
+            f"{'='*30}\n"
+            f"👤 {attacker[3]} ({attacker[4]})\n"
+            f"❤️ HP: {attacker[9]}/{attacker[8]}\n"
+            f"⚔️ ATK: {attacker[10]} | 🛡️ ARM: {attacker[11]} | 🏃 AGI: {attacker[12]}\n\n"
+            f"👤 {opponent_name} ({opponent[4]})\n"
+            f"❤️ HP: {opponent[9]}/{opponent[8]}\n"
+            f"⚔️ ATK: {opponent[10]} | 🛡️ ARM: {opponent[11]} | 🏃 AGI: {opponent[12]}\n"
+            f"{'='*30}\n\n"
+            f"🎲 {attacker[3]}, киньте кубик d20 и введите результат (1-20):"
+        )
+        await state.set_state(GameStates.waiting_attacker_dice)
+    
+    elif battle_type == "pve":
+        # PvE: выбираем этаж или монстра
+        if message.text.startswith("Этаж"):
+            # Выбрали этаж, теперь показываем монстров
+            floor = int(message.text.split()[1])
+            await state.update_data(floor=floor)
+            await message.answer(
+                f"👹 ВЫБЕРИТЕ МОНСТРА НА ЭТАЖЕ {floor}:",
+                reply_markup=get_monster_keyboard(floor=floor)
+            )
+        else:
+            # Выбрали монстра
+            monster_name = message.text
+            monster = get_monster(monster_name)
+            
+            if not monster:
+                await message.answer("❌ Монстр не найден! Выберите из списка.")
+                return
+            
+            attacker = get_player(message.from_user.id)
+            await state.update_data(
+                attacker=attacker,
+                monster=monster,
+                monster_name=monster_name
+            )
+            
+            await message.answer(
+                f"⚔️ БОЙ НАЧАТ!\n"
+                f"{'='*30}\n"
+                f"👤 {attacker[3]} ({attacker[4]})\n"
+                f"❤️ HP: {attacker[9]}/{attacker[8]}\n"
+                f"⚔️ ATK: {attacker[10]} | 🛡️ ARM: {attacker[11]} | 🏃 AGI: {attacker[12]}\n\n"
+                f"👹 {monster_name} (ур. {monster[3]})\n"
+                f"❤️ HP: {monster[4]}\n"
+                f"⚔️ ATK: {monster[5]} | 🛡️ ARM: {monster[6]} | 🏃 AGI: {monster[7]}\n"
+                f"{'='*30}\n\n"
+                f"🎲 {attacker[3]}, киньте кубик d20 для себя и введите результат (1-20):"
+            )
+            await state.set_state(GameStates.waiting_attacker_dice)
+
+@dp.message(GameStates.waiting_attacker_dice)
+async def process_attacker_dice(message: types.Message, state: FSMContext):
     try:
         dice = int(message.text)
         if dice < 1 or dice > 20:
             raise ValueError
     except:
-        await message.answer("❌ Введите число от 1 до 20!\n🎲 Киньте кубик d20 и введите результат:")
+        await message.answer("❌ Введите число от 1 до 20!")
         return
     
     data = await state.get_data()
+    battle_type = data.get('battle_type', 'pvp')
     
-    # Генерируем бросок монстра
-    monster_dice = random.randint(1, 20)
+    await state.update_data(attacker_dice=dice)
+    
+    if battle_type == "pvp":
+        # Ждём броска защитника
+        defender_name = data['opponent_name']
+        await message.answer(
+            f"🎲 {defender_name}, киньте кубик d20 и введите результат (1-20):\n"
+            f"(Перешлите это сообщение {defender_name})"
+        )
+        await state.set_state(GameStates.waiting_defender_dice)
+    else:
+        # PvE: игрок вводит бросок за монстра
+        await message.answer(
+            f"🎲 Теперь киньте кубик d20 для {data['monster_name']} и введите результат (1-20):"
+        )
+        await state.set_state(GameStates.waiting_monster_dice)
+
+@dp.message(GameStates.waiting_defender_dice)
+async def process_defender_dice(message: types.Message, state: FSMContext):
+    try:
+        dice = int(message.text)
+        if dice < 1 or dice > 20:
+            raise ValueError
+    except:
+        await message.answer("❌ Введите число от 1 до 20!")
+        return
+    
+    data = await state.get_data()
+    attacker = data['attacker']
+    defender = data['defender']
+    attacker_dice = data['attacker_dice']
     
     # Расчёт урона
-    dmg_to_monster = calculate_damage(data['hero_atk'], data['monster_arm'], dice)
-    dmg_to_hero = calculate_damage(data['monster_atk'], data['hero_arm'], monster_dice)
+    attacker_dmg = calculate_damage(
+        attacker[10], attacker[12],  # ATK, AGI атакующего
+        defender[11], defender[12],  # ARM, AGI защитника
+        attacker_dice
+    )
     
-    # Обновление здоровья
-    new_monster_hp = max(0, data['monster_hp'] - dmg_to_monster)
-    new_hero_hp = max(0, data['hero_hp'] - dmg_to_hero)
+    defender_dmg = calculate_damage(
+        defender[10], defender[12],  # ATK, AGI защитника
+        attacker[11], attacker[12],  # ARM, AGI атакующего
+        dice
+    )
     
+    # Новый урон
+    new_attacker_hp = max(0, attacker[9] - defender_dmg)
+    new_defender_hp = max(0, defender[9] - attacker_dmg)
+    
+    # Обновление в БД
+    update_player(attacker[0], current_hp=new_attacker_hp)
+    update_player(defender[0], current_hp=new_defender_hp)
+    
+    # Лог боя
     log = (
         f"🎲 РАУНД:\n"
         f"{'='*30}\n"
-        f"🧙 {data['hero_name']} бросает {dice} → {dmg_to_monster} урона!\n"
-        f"👹 {data['monster_name']} бросает {monster_dice} → {dmg_to_hero} урона!\n"
+        f"👤 {attacker[3]} бросает {attacker_dice} → {attacker_dmg} урона!\n"
+        f"👤 {defender[3]} бросает {dice} → {defender_dmg} урона!\n"
         f"{'='*30}\n\n"
-        f"❤️ {data['hero_name']}: {new_hero_hp} HP\n"
-        f"❤️ {data['monster_name']}: {new_monster_hp} HP"
+        f"❤️ {attacker[3]}: {new_attacker_hp}/{attacker[8]} HP\n"
+        f"❤️ {defender[3]}: {new_defender_hp}/{defender[8]} HP"
     )
     
     await message.answer(log)
     
-    # Проверка завершения боя
-    if new_monster_hp <= 0 and new_hero_hp <= 0:
-        # Ничья
-        await message.answer(
-            "⚔️ НИЧЬЯ!\n"
-            "Оба пали в бою...\n"
-            "🧙 Герой воскресает с полным здоровьем.",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-                resize_keyboard=True
-            )
-        )
-        # Воскрешение героя
-        update_player(message.from_user.id, hero1_hp=data['hero_hp'])
-        await state.set_state(GameStates.choosing_action)
-        
-    elif new_monster_hp <= 0:
-        # Победа
+    # Проверка завершения
+    if new_attacker_hp <= 0 and new_defender_hp <= 0:
+        await message.answer("⚔️ НИЧЬЯ! Оба пали в бою!")
+        update_player(attacker[0], current_hp=attacker[8])  # Воскрешение
+        update_player(defender[0], current_hp=defender[8])
+    elif new_defender_hp <= 0:
+        await message.answer(f"✅ {attacker[3]} победил {defender[3]}!")
+        update_player(attacker[0], wins=attacker[13] + 1, current_hp=attacker[8])  # Воскрешение победителя
+        update_player(defender[0], losses=defender[14] + 1, current_hp=defender[8])  # Воскрешение проигравшего
+    elif new_attacker_hp <= 0:
+        await message.answer(f"✅ {defender[3]} победил {attacker[3]}!")
+        update_player(defender[0], wins=defender[13] + 1, current_hp=defender[8])
+        update_player(attacker[0], losses=attacker[14] + 1, current_hp=attacker[8])
+    
+    await state.set_state(GameStates.choosing_action)
+    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+
+@dp.message(GameStates.waiting_monster_dice)
+async def process_monster_dice(message: types.Message, state: FSMContext):
+    try:
+        dice = int(message.text)
+        if dice < 1 or dice > 20:
+            raise ValueError
+    except:
+        await message.answer("❌ Введите число от 1 до 20!")
+        return
+    
+    data = await state.get_data()
+    attacker = data['attacker']
+    monster = data['monster']
+    attacker_dice = data['attacker_dice']
+    
+    # Расчёт урона
+    attacker_dmg = calculate_damage(
+        attacker[10], attacker[12],  # ATK, AGI героя
+        monster[6], monster[7],      # ARM, AGI монстра
+        attacker_dice
+    )
+    
+    monster_dmg = calculate_damage(
+        monster[5], monster[7],      # ATK, AGI монстра
+        attacker[11], attacker[12],  # ARM, AGI героя
+        dice
+    )
+    
+    # Новый урон
+    new_attacker_hp = max(0, attacker[9] - monster_dmg)
+    new_monster_hp = max(0, monster[4] - attacker_dmg)
+    
+    # Обновление героя в БД
+    update_player(attacker[0], current_hp=new_attacker_hp)
+    
+    # Лог боя
+    log = (
+        f"🎲 РАУНД:\n"
+        f"{'='*30}\n"
+        f"👤 {attacker[3]} бросает {attacker_dice} → {attacker_dmg} урона!\n"
+        f"👹 {monster[2]} бросает {dice} → {monster_dmg} урона!\n"
+        f"{'='*30}\n\n"
+        f"❤️ {attacker[3]}: {new_attacker_hp}/{attacker[8]} HP\n"
+        f"❤️ {monster[2]}: {new_monster_hp}/{monster[4]} HP"
+    )
+    
+    await message.answer(log)
+    
+    # Проверка завершения
+    if new_monster_hp <= 0:
+        # Победа над монстром
         # Начисление опыта
-        exp_gain = int(data['monster_exp'] * (1 + (data['monster_lvl'] - data['hero_lvl']) * 0.1))
-        new_exp = data['hero_exp'] + exp_gain if 'hero_exp' in data else exp_gain
+        exp_gain = monster[8]  # exp_reward
+        new_exp = attacker[6] + exp_gain
         
         # Проверка уровня
-        exp_for_next = data['hero_lvl'] * 100
+        exp_for_next = attacker[5] * 100
         if new_exp >= exp_for_next:
-            new_lvl = data['hero_lvl'] + 1
+            # Повышение уровня
+            new_lvl = attacker[5] + 1
             await message.answer(
-                f"✨ ПОБЕДА!\n"
-                f"{'='*30}\n"
-                f"✅ {data['hero_name']} победил {data['monster_name']}!\n"
+                f"✅ {attacker[3]} победил {monster[2]}!\n"
                 f"✨ Получено {exp_gain} опыта!\n"
-                f"{'='*30}\n\n"
+                f"{'='*30}\n"
                 f"🎉 ПОВЫШЕНИЕ УРОВНЯ!\n"
-                f"{data['hero_name']} достиг {new_lvl} уровня!\n"
-                f"+5 очков навыков, +10 здоровья, +1 ко всем параметрам!\n"
-                f"🧙 Герой воскресает с полным здоровьем.",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-                    resize_keyboard=True
-                )
+                f"Достигнут {new_lvl} уровень!\n"
+                f"+5 очков навыков, +10 здоровья, +1 ко всем параметрам!"
             )
-            # Обновляем все параметры
             update_player(
-                message.from_user.id,
-                hero1_lvl=new_lvl,
-                hero1_exp=new_exp - exp_for_next,
-                hero1_skill_points=data.get('hero_skill_points', 0) + 5,
-                hero1_max_hp=data['hero_hp'] + 10,
-                hero1_hp=data['hero_hp'] + 10,
-                hero1_atk=data['hero_atk'] + 1,
-                hero1_arm=data['hero_arm'] + 1,
-                hero1_agi=data['hero_agi'] + 1
+                attacker[0],
+                level=new_lvl,
+                exp=new_exp - exp_for_next,
+                skill_points=attacker[7] + 5,
+                max_hp=attacker[8] + 10,
+                current_hp=attacker[8] + 10,
+                attack=attacker[10] + 1,
+                armor=attacker[11] + 1,
+                agility=attacker[12] + 1,
+                wins=attacker[13] + 1
             )
         else:
             await message.answer(
-                f"✨ ПОБЕДА!\n"
-                f"{'='*30}\n"
-                f"✅ {data['hero_name']} победил {data['monster_name']}!\n"
-                f"✨ Получено {exp_gain} опыта!\n"
-                f"📊 Всего опыта: {new_exp}/{exp_for_next}\n"
-                f"{'='*30}\n\n"
-                f"🧙 Герой воскресает с полным здоровьем.",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-                    resize_keyboard=True
-                )
+                f"✅ {attacker[3]} победил {monster[2]}!\n"
+                f"✨ Получено {exp_gain} опыта! ({new_exp}/{exp_for_next})"
             )
             update_player(
-                message.from_user.id,
-                hero1_exp=new_exp,
-                hero1_hp=data['hero_hp']  # Воскрешение
+                attacker[0],
+                exp=new_exp,
+                current_hp=attacker[8],  # Воскрешение
+                wins=attacker[13] + 1
             )
-        await state.set_state(GameStates.choosing_action)
         
-    elif new_hero_hp <= 0:
-        # Поражение
+        await state.set_state(GameStates.choosing_action)
+        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+        
+    elif new_attacker_hp <= 0:
+        # Поражение от монстра
         await message.answer(
-            f"☠️ ПОРАЖЕНИЕ!\n"
-            f"{'='*30}\n"
-            f"💀 {data['hero_name']} пал в бою с {data['monster_name']}...\n"
-            f"{'='*30}\n\n"
-            f"✨ ВОСКРЕШЕНИЕ!\n"
-            f"🧙 Герой воскресает с полным здоровьем.",
-            reply_markup=ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-                resize_keyboard=True
-            )
+            f"☠️ {attacker[3]} пал в бою с {monster[2]}...\n"
+            f"✨ Воскрешение с полным здоровьем!"
         )
-        # Воскрешение
-        update_player(message.from_user.id, hero1_hp=data['hero_hp'])
+        update_player(
+            attacker[0],
+            current_hp=attacker[8],
+            losses=attacker[14] + 1
+        )
         await state.set_state(GameStates.choosing_action)
-        
+        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+    
     else:
         # Продолжение боя
-        await state.update_data(hero_hp=new_hero_hp, monster_hp=new_monster_hp)
+        await state.update_data(
+            attacker=get_player(attacker[0]),  # Обновляем данные
+            monster=(monster[0], monster[1], monster[2], monster[3], new_monster_hp, monster[5], monster[6], monster[7], monster[8])
+        )
         await message.answer(
-            "🎲 КИНЬТЕ КУБИК СНОВА!\n"
-            "Введите результат броска (число от 1 до 20):"
+            "🎲 КИНЬТЕ КУБИКИ СНОВА!\n"
+            f"Для {attacker[3]} (1-20):"
         )
+        await state.set_state(GameStates.waiting_attacker_dice)
 
-# СТАТИСТИКА
-@dp.message(lambda m: m.text == "📊 Статистика")
+@dp.message(F.text == "📊 Статистика")
 async def stats(message: types.Message):
-    await message.answer(
-        "📊 СТАТИСТИКА ИГРЫ:\n"
-        "{'='*30}\n"
-        "• 6 уникальных героев для прокачки\n"
-        "• 20 видов монстров на 5 этажах\n"
-        "• Система уровней и опыта\n"
-        "• Прокачка: здоровье, атака, броня, ловкость\n"
-        "• PvP-бои (в разработке)\n"
-        "• Физические кубики d20 для атмосферы!\n"
-        "{'='*30}\n\n"
-        "🎲 Как играть:\n"
-        "1. Выберите героя в меню «Персонажи»\n"
-        "2. Прокачайте параметры за очки навыков\n"
-        "3. Идите на «Бой» и выберите этаж\n"
-        "4. Киньте физический кубик d20\n"
-        "5. Введите результат в бота\n"
-        "6. Бот рассчитает урон и покажет результат\n"
-        "7. Побеждайте монстров и получайте опыт!",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-            resize_keyboard=True
+    players = get_all_players()
+    
+    if not players:
+        await message.answer("📊 Пока нет игроков в игре!")
+        return
+    
+    stats_text = "📊 **СТАТИСТИКА ИГРОКОВ:**\n\n"
+    stats_text += "="*40 + "\n"
+    
+    for player in players:
+        cls = CLASSES[player[4]]
+        win_rate = round(player[13] / (player[13] + player[14]) * 100, 1) if (player[13] + player[14]) > 0 else 0
+        
+        stats_text += (
+            f"👤 {player[3]} {cls['emoji']}\n"
+            f"   🎭 {player[4]} | 📊 ур. {player[5]}\n"
+            f"   ❤️ {player[9]}/{player[8]} HP\n"
+            f"   ⚔️ {player[10]} ATK | 🛡️ {player[11]} ARM | 🏃 {player[12]} AGI\n"
+            f"   🏆 {player[13]} побед | {player[14]} поражений | {win_rate}% побед\n"
+            f"{'='*40}\n"
         )
-    )
+    
+    await message.answer(stats_text, parse_mode="Markdown")
 
-# ПОМОЩЬ
-@dp.message(lambda m: m.text == "❓ Помощь")
+@dp.message(F.text == "❓ Помощь")
 async def help_cmd(message: types.Message):
-    await message.answer(
-        "❓ ПОМОЩЬ:\n"
-        "{'='*30}\n\n"
-        "🎲 КУБИКИ:\n"
+    help_text = (
+        "❓ **ПОМОЩЬ:**\n"
+        "{'='*40}\n\n"
+        "🎲 **КУБИКИ:**\n"
         "• Используйте физический кубик d20\n"
-        "• Бросок 1-20 влияет на урон\n"
-        "• 10 = базовый урон, 20 = +10, 1 = -9\n\n"
-        "⚔️ БОЙ:\n"
-        "• Оба участника наносят урон одновременно\n"
+        "• Бросок влияет на урон по формуле:\n"
+        "  Урон = (АТК - БРОНЯ×0.7) + (ЛОВК×0.3) + (КУБИК-10)×1.5\n\n"
+        "⚔️ **БОЙ:**\n"
+        "• PvP: оба игрока вводят свои броски\n"
+        "• PvE: игрок вводит оба броска\n"
         "• Победитель получает опыт (только монстры)\n"
         "• После смерти герой воскресает с полным HP\n\n"
-        "⭐ ПРОКАЧКА:\n"
-        "• +5 HP = +5 макс. здоровья и текущего\n"
-        "• +2 ATK = +2 к атаке за 1 очко навыка"
-        "• +1 ARM = +1 к броне за 1 очко навыка"
-        "• +1 AGI = +1 к ловкости за 1 очко навыка"
-        "{'='*30}",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="🧙 Персонажи"), KeyboardButton(text="⚔️ Бой")]],
-            resize_keyboard=True
-        )
+        "⭐ **ПРОКАЧКА:**\n"
+        "(В разработке)\n"
+        "• +5 HP = +5 макс. здоровья и текущего за 1 очко"
+        "• +2 ATK = +2 к атаке за 1 очко"
+        "• +1 ARM = +1 к броне за 1 очко"
+        "• +1 AGI = +1 к ловкости за 1 очко"
+        "{'='*40}"
     )
+    
+    await message.answer(help_text, parse_mode="Markdown")
 
 # ЗАПУСК БОТА
 async def main():
