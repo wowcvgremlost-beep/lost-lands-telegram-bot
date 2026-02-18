@@ -2,14 +2,45 @@ def init_db():
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     
-    # Добавляем золото в таблицу игроков
-    # Проверяем, есть ли уже столбец gold
-    cur.execute("PRAGMA table_info(players)")
-    columns = [col[1] for col in cur.fetchall()]
-    if 'gold' not in columns:
-        cur.execute("ALTER TABLE players ADD COLUMN gold INTEGER DEFAULT 0")
+    # 1. СОЗДАЁМ ТАБЛИЦУ PLAYERS СРАЗУ СО ВСЕМИ СТОЛБЦАМИ (включая gold)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS players (
+            telegram_id INTEGER PRIMARY KEY,
+            username TEXT,
+            hero_slot INTEGER,
+            hero_name TEXT,
+            hero_class TEXT,
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            skill_points INTEGER DEFAULT 0,
+            max_hp INTEGER DEFAULT 100,
+            current_hp INTEGER DEFAULT 100,
+            attack INTEGER DEFAULT 10,
+            armor INTEGER DEFAULT 5,
+            agility INTEGER DEFAULT 5,
+            wins INTEGER DEFAULT 0,
+            losses INTEGER DEFAULT 0,
+            gold INTEGER DEFAULT 0,  -- ✅ gold сразу в структуре
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
-    # Таблица магазина
+    # 2. Таблица монстров (обязательна!)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS monsters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            floor INTEGER,
+            name TEXT,
+            level INTEGER,
+            hp INTEGER,
+            attack INTEGER,
+            armor INTEGER,
+            agility INTEGER,
+            exp_reward INTEGER
+        )
+    ''')
+    
+    # 3. Таблица магазина
     cur.execute('''
         CREATE TABLE IF NOT EXISTS shop (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,13 +52,12 @@ def init_db():
         )
     ''')
     
-    # Таблица инвентаря
+    # 4. Таблица инвентаря (БЕЗ item_id!)
     cur.execute('''
         CREATE TABLE IF NOT EXISTS inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_id INTEGER,
-            item_id INTEGER,
-            item_name TEXT,
+            item_name TEXT,      -- ✅ убрали item_id (не используется)
             item_type TEXT,
             effect TEXT,
             equipped BOOLEAN DEFAULT 0,
@@ -36,7 +66,25 @@ def init_db():
         )
     ''')
     
-    # Заполняем магазин товарами (если пусто)
+    # 5. Таблица активных боёв (С used_potion!)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS active_battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attacker_id INTEGER,
+            defender_id INTEGER,
+            attacker_dice INTEGER,
+            defender_dice INTEGER,
+            attacker_hp INTEGER,
+            defender_hp INTEGER,
+            round_num INTEGER DEFAULT 1,
+            status TEXT,
+            battle_type TEXT,
+            used_potion BOOLEAN DEFAULT 0,  -- ✅ КРИТИЧЕСКИ ВАЖНО!
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # 6. Заполняем магазин (если пусто)
     cur.execute('SELECT COUNT(*) FROM shop')
     if cur.fetchone()[0] == 0:
         items = [
@@ -58,22 +106,32 @@ def init_db():
         ]
         cur.executemany('INSERT INTO shop (name, item_type, effect, price, category) VALUES (?, ?, ?, ?, ?)', items)
     
-    # Новая таблица для активных боёв
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS active_battles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            attacker_id INTEGER,
-            defender_id INTEGER,
-            attacker_dice INTEGER,
-            defender_dice INTEGER,
-            attacker_hp INTEGER,
-            defender_hp INTEGER,
-            round_num INTEGER DEFAULT 1,
-            status TEXT,  -- 'waiting_attacker', 'waiting_defender', 'completed'
-            battle_type TEXT,  -- 'pvp' or 'pve'
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    # 7. Заполняем монстров (если пусто) — КРИТИЧЕСКИ ВАЖНО!
+    cur.execute('SELECT COUNT(*) FROM monsters')
+    if cur.fetchone()[0] == 0:
+        monsters = [
+            (1, 'Гоблин', 1, 50, 8, 3, 6, 80),
+            (1, 'Крыса', 1, 30, 5, 1, 8, 50),
+            (1, 'Скелет', 2, 60, 10, 4, 5, 100),
+            (1, 'Паук', 1, 40, 7, 2, 9, 70),
+            (2, 'Орк', 3, 120, 15, 10, 7, 250),
+            (2, 'Тролль', 4, 180, 20, 15, 6, 400),
+            (2, 'Гарпия', 3, 90, 12, 5, 12, 220),
+            (2, 'Зомби', 3, 100, 10, 8, 4, 180),
+            (3, 'Минотавр', 6, 250, 25, 20, 8, 600),
+            (3, 'Вампир', 5, 200, 22, 12, 15, 550),
+            (3, 'Грифон', 5, 180, 18, 10, 18, 500),
+            (3, 'Элементаль', 6, 220, 24, 18, 10, 580),
+            (4, 'Циклоп', 8, 400, 35, 25, 9, 900),
+            (4, 'Медуза', 7, 300, 28, 15, 16, 800),
+            (4, 'Демон', 9, 450, 40, 30, 12, 1100),
+            (4, 'Лич', 8, 350, 32, 22, 14, 950),
+            (5, 'Дракон', 12, 800, 50, 35, 20, 1500),
+            (5, 'Гидра', 11, 700, 45, 30, 18, 1400),
+            (5, 'Архидемон', 13, 900, 55, 40, 22, 1700),
+            (5, 'Титан', 15, 1200, 60, 45, 25, 2000)
+        ]
+        cur.executemany('INSERT INTO monsters (floor, name, level, hp, attack, armor, agility, exp_reward) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', monsters)
     
     conn.commit()
     conn.close()
