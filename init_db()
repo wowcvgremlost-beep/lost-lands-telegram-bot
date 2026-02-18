@@ -2,7 +2,61 @@ def init_db():
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     
-    # ... существующие таблицы ...
+    # Добавляем золото в таблицу игроков
+    # Проверяем, есть ли уже столбец gold
+    cur.execute("PRAGMA table_info(players)")
+    columns = [col[1] for col in cur.fetchall()]
+    if 'gold' not in columns:
+        cur.execute("ALTER TABLE players ADD COLUMN gold INTEGER DEFAULT 0")
+    
+    # Таблица магазина
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS shop (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            item_type TEXT,
+            effect TEXT,
+            price INTEGER,
+            category TEXT
+        )
+    ''')
+    
+    # Таблица инвентаря
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id INTEGER,
+            item_id INTEGER,
+            item_name TEXT,
+            item_type TEXT,
+            effect TEXT,
+            equipped BOOLEAN DEFAULT 0,
+            slot TEXT,
+            bought_price INTEGER
+        )
+    ''')
+    
+    # Заполняем магазин товарами (если пусто)
+    cur.execute('SELECT COUNT(*) FROM shop')
+    if cur.fetchone()[0] == 0:
+        items = [
+            ("Малое зелье", "Зелье", "+30HP", 50, "Зелья"),
+            ("Среднее зелье", "Зелье", "+60HP", 100, "Зелья"),
+            ("Большое зелье", "Зелье", "+100HP", 150, "Зелья"),
+            ("Меч Ученика", "Оружие 1", "+1 Атака", 150, "Оружие"),
+            ("Щит Ученика", "Оружие 2", "+1 Броня", 150, "Оружие"),
+            ("Шлем Ученика", "Экипировка 1", "+1 Броня", 200, "Экипировка"),
+            ("Броня Ученика", "Экипировка 2", "+1 Броня", 200, "Экипировка"),
+            ("Штаны Ученика", "Экипировка 3", "+1 Ловкость", 200, "Экипировка"),
+            ("Ботинки Ученика", "Экипировка 4", "+1 Ловкость", 200, "Экипировка"),
+            ("Руки Ученика", "Экипировка 5", "+1 Атака", 200, "Экипировка"),
+            ("Перчатки Ученика", "Экипировка 6", "+1 Атака", 200, "Экипировка"),
+            ("Амулет Ловкости", "Аксессуар 1", "+2 Ловкость", 400, "Аксессуары"),
+            ("Кольцо Защиты", "Аксессуар 2", "+2 Броня", 400, "Аксессуары"),
+            ("Цепь Силы", "Аксессуар 3", "+2 Атака", 400, "Аксессуары"),
+            ("Свиток опыта", "Разное", "+50 Опыта", 500, "Разное")
+        ]
+        cur.executemany('INSERT INTO shop (name, item_type, effect, price, category) VALUES (?, ?, ?, ?, ?)', items)
     
     # Новая таблица для активных боёв
     cur.execute('''
