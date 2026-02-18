@@ -1,0 +1,25 @@
+def init_db():
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    
+    # ... существующие таблицы ...
+    
+    # Новая таблица для активных боёв
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS active_battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attacker_id INTEGER,
+            defender_id INTEGER,
+            attacker_dice INTEGER,
+            defender_dice INTEGER,
+            attacker_hp INTEGER,
+            defender_hp INTEGER,
+            round_num INTEGER DEFAULT 1,
+            status TEXT,  -- 'waiting_attacker', 'waiting_defender', 'completed'
+            battle_type TEXT,  -- 'pvp' or 'pve'
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
