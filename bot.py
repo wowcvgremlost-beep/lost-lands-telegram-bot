@@ -1,5 +1,5 @@
 # ============================================================================
-# ПОТЕРЯННЫЕ ЗЕМЛИ — ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ С ИСПРАВЛЕННЫМ БОЕМ
+# ПОТЕРЯННЫЕ ЗЕМЛИ — ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ
 # ============================================================================
 import os
 import sqlite3
@@ -33,6 +33,7 @@ class GameStates(StatesGroup):
     waiting_attacker_dice = State()
     waiting_defender_dice = State()
     waiting_monster_dice = State()
+    choosing_stat_to_upgrade = State()
 
 # Классы персонажей
 CLASSES = {
@@ -126,6 +127,22 @@ def init_db():
         )
     ''')
     
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS active_battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attacker_id INTEGER,
+            defender_id INTEGER,
+            attacker_dice INTEGER,
+            defender_dice INTEGER,
+            attacker_hp INTEGER,
+            defender_hp INTEGER,
+            round_num INTEGER DEFAULT 1,
+            status TEXT,
+            battle_type TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     cur.execute('SELECT COUNT(*) FROM monsters')
     if cur.fetchone()[0] == 0:
         monsters = [
@@ -155,7 +172,50 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Вспомогательные функции
+# Вспомогательные функции для работы с боями
+def create_battle(attacker_id, defender_id, attacker_hp, defender_hp, battle_type="pvp"):
+    """Создать новый бой в БД"""
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO active_battles 
+        (attacker_id, defender_id, attacker_hp, defender_hp, status, battle_type)
+        VALUES (?, ?, ?, ?, 'waiting_attacker', ?)
+    ''', (attacker_id, defender_id, attacker_hp, defender_hp, battle_type))
+    battle_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return battle_id
+
+def get_active_battle(player_id):
+    """Получить активный бой для игрока (как атакующего или защитника)"""
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('''
+        SELECT * FROM active_battles 
+        WHERE (attacker_id = ? OR defender_id = ?) 
+        AND status != 'completed'
+        ORDER BY id DESC LIMIT 1
+    ''', (player_id, player_id))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+def update_battle(battle_id, **kwargs):
+    """Обновить данные боя"""
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    set_clause = ', '.join([f"{k} = ?" for k in kwargs.keys()])
+    values = list(kwargs.values()) + [battle_id]
+    cur.execute(f'UPDATE active_battles SET {set_clause} WHERE id = ?', values)
+    conn.commit()
+    conn.close()
+
+def complete_battle(battle_id):
+    """Завершить бой"""
+    update_battle(battle_id, status='completed')
+
+# Вспомогательные функции для работы с игроками
 def get_player(telegram_id):
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
@@ -246,8 +306,9 @@ def calculate_damage(attacker_atk, attacker_agi, defender_arm, defender_agi, dic
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⚔️ Бой")],
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="❓ Помощь")]
+            [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⭐ Прокачка навыков")],
+            [KeyboardButton(text="⚔️ Бой"), KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="❓ Помощь")]
         ],
         resize_keyboard=True
     )
@@ -317,6 +378,16 @@ def get_monster_keyboard(floor=None):
         buttons = [[KeyboardButton(text=floor)] for floor in floors]
         buttons.append([KeyboardButton(text="🔙 Назад")])
         return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def get_upgrade_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❤️ Здоровье (+5)"), KeyboardButton(text="⚔️ Атака (+2)")],
+            [KeyboardButton(text="🛡️ Броня (+1)"), KeyboardButton(text="🏃 Ловкость (+1)")],
+            [KeyboardButton(text="🔙 Назад")]
+        ],
+        resize_keyboard=True
+    )
 
 # Команды
 @dp.message(Command("start"))
@@ -527,6 +598,95 @@ async def my_character(message: types.Message):
         return
     await show_character(message, player)
 
+@dp.message(F.text == "⭐ Прокачка навыков")
+async def upgrade_skills(message: types.Message, state: FSMContext):
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Создайте персонажа: /start")
+        return
+    
+    if player[7] <= 0:
+        await message.answer(
+            "❌ У вас нет очков навыков!\n"
+            "Победите монстров, чтобы получить опыт и повысить уровень.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    await message.answer(
+        f"⭐ ПРОКАЧКА НАВЫКОВ ({player[7]} очков)\n"
+        f"{'='*40}\n"
+        f"👤 {player[3]} ({player[4]})\n"
+        f"📊 Уровень: {player[5]}\n\n"
+        f"Текущие характеристики:\n"
+        f"❤️ Здоровье: {player[9]}/{player[8]}\n"
+        f"⚔️ Атака: {player[10]}\n"
+        f"🛡️ Броня: {player[11]}\n"
+        f"🏃 Ловкость: {player[12]}\n\n"
+        f"Выберите параметр для прокачки:",
+        reply_markup=get_upgrade_keyboard()
+    )
+    await state.set_state(GameStates.choosing_stat_to_upgrade)
+    await state.update_data(player=player)
+
+@dp.message(GameStates.choosing_stat_to_upgrade)
+async def process_upgrade(message: types.Message, state: FSMContext):
+    if message.text == "🔙 Назад":
+        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    player = data['player']
+    telegram_id = message.from_user.id
+    
+    if player[7] <= 0:
+        await message.answer("❌ Нет очков навыков!", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+    
+    stat_map = {
+        "❤️ Здоровье (+5)": ("max_hp", 5, "Здоровье"),
+        "⚔️ Атака (+2)": ("attack", 2, "Атака"),
+        "🛡️ Броня (+1)": ("armor", 1, "Броня"),
+        "🏃 Ловкость (+1)": ("agility", 1, "Ловкость")
+    }
+    
+    if message.text not in stat_map:
+        await message.answer("❌ Выберите параметр из меню!")
+        return
+    
+    stat_db, bonus, stat_name = stat_map[message.text]
+    
+    # Обновляем параметр
+    if stat_db == "max_hp":
+        update_player(telegram_id, 
+                     max_hp=player[8] + bonus,
+                     current_hp=player[9] + bonus,
+                     skill_points=player[7] - 1)
+    elif stat_db == "attack":
+        update_player(telegram_id, attack=player[10] + bonus, skill_points=player[7] - 1)
+    elif stat_db == "armor":
+        update_player(telegram_id, armor=player[11] + bonus, skill_points=player[7] - 1)
+    elif stat_db == "agility":
+        update_player(telegram_id, agility=player[12] + bonus, skill_points=player[7] - 1)
+    
+    # Получаем обновлённые данные
+    updated_player = get_player(telegram_id)
+    
+    await message.answer(
+        f"✅ Прокачано!\n"
+        f"+{bonus} к {stat_name}\n\n"
+        f"⭐ Осталось очков: {updated_player[7]}\n\n"
+        f"Текущие характеристики:\n"
+        f"❤️ Здоровье: {updated_player[9]}/{updated_player[8]}\n"
+        f"⚔️ Атака: {updated_player[10]}\n"
+        f"🛡️ Броня: {updated_player[11]}\n"
+        f"🏃 Ловкость: {updated_player[12]}",
+        reply_markup=get_main_keyboard()
+    )
+    await state.clear()
+
 @dp.message(F.text == "⚔️ Бой")
 async def battle_menu(message: types.Message, state: FSMContext):
     player = get_player(message.from_user.id)
@@ -592,13 +752,14 @@ async def choose_opponent(message: types.Message, state: FSMContext):
             return
         
         attacker = get_player(message.from_user.id)
-        await state.update_data(
-            battle_type="pvp",
-            attacker=attacker,
-            defender=opponent,
-            attacker_hp=attacker[9],
-            defender_hp=opponent[9],
-            round_num=1
+        
+        # Создаем бой в БД
+        battle_id = create_battle(
+            attacker[0], 
+            opponent[0], 
+            attacker[9], 
+            opponent[9], 
+            "pvp"
         )
         
         # Отправляем уведомление второму игроку
@@ -623,6 +784,14 @@ async def choose_opponent(message: types.Message, state: FSMContext):
             f"⚔️ ATK: {opponent[10]} | 🛡️ ARM: {opponent[11]} | 🏃 AGI: {opponent[12]}\n"
             f"{'='*30}\n\n"
             f"🎲 {attacker[3]}, киньте кубик d20 и введите результат (1-20):"
+        )
+        
+        # Сохраняем данные боя в состояние
+        await state.update_data(
+            battle_id=battle_id,
+            battle_type="pvp",
+            attacker=attacker,
+            defender=opponent
         )
         await state.set_state(GameStates.waiting_attacker_dice)
     
@@ -678,8 +847,12 @@ async def process_attacker_dice(message: types.Message, state: FSMContext):
     await state.update_data(attacker_dice=dice)
     
     if battle_type == "pvp":
+        battle_id = data['battle_id']
         defender = data['defender']
         attacker = data['attacker']
+        
+        # Сохраняем бросок атакующего в БД
+        update_battle(battle_id, attacker_dice=dice, status='waiting_defender')
         
         # Отправляем бросок второму игроку
         try:
@@ -689,7 +862,10 @@ async def process_attacker_dice(message: types.Message, state: FSMContext):
                      f"Ваша очередь! Киньте кубик d20 и введите результат (1-20):"
             )
             await message.answer(f"✅ Ваш бросок ({dice}) отправлен {defender[3]}.\nОжидайте его ответа...")
-            await state.set_state(GameStates.waiting_defender_dice)
+            
+            # Очищаем состояние первого игрока
+            await state.clear()
+            
         except:
             await message.answer(f"❌ Не удалось отправить сообщение {defender[3]}. Он должен написать /start")
     
@@ -697,137 +873,6 @@ async def process_attacker_dice(message: types.Message, state: FSMContext):
         monster_name = data['monster_name']
         await message.answer(f"🎲 Теперь киньте кубик d20 для {monster_name} (1-20):")
         await state.set_state(GameStates.waiting_monster_dice)
-
-@dp.message(GameStates.waiting_defender_dice)
-async def process_defender_dice(message: types.Message, state: FSMContext):
-    try:
-        dice = int(message.text)
-        if dice < 1 or dice > 20:
-            raise ValueError
-    except:
-        await message.answer("❌ Введите число 1-20!")
-        return
-    
-    data = await state.get_data()
-    attacker = data['attacker']
-    defender = data['defender']
-    attacker_dice = data['attacker_dice']
-    round_num = data.get('round_num', 1)
-    attacker_hp = data.get('attacker_hp', attacker[9])
-    defender_hp = data.get('defender_hp', defender[9])
-    
-    # Расчёт урона с детализацией
-    attacker_dmg = calculate_damage(attacker[10], attacker[12], defender[11], defender[12], attacker_dice)
-    defender_dmg = calculate_damage(defender[10], defender[12], attacker[11], attacker[12], dice)
-    
-    # Увороты и блоки (упрощённая версия для стабильности)
-    dodge_chance_att = min(70, max(0, (defender[12] - attacker[12]) * 2))
-    dodge_chance_def = min(70, max(0, (attacker[12] - defender[12]) * 2))
-    
-    did_dodge_att = random.randint(1, 100) <= dodge_chance_att
-    did_dodge_def = random.randint(1, 100) <= dodge_chance_def
-    
-    if did_dodge_att:
-        attacker_dmg = 0
-    if did_dodge_def:
-        defender_dmg = 0
-    
-    # Криты
-    is_crit_att = attacker_dice >= 18
-    is_crit_def = dice >= 18
-    if is_crit_att and not did_dodge_att:
-        attacker_dmg = round(attacker_dmg * 1.8)
-    if is_crit_def and not did_dodge_def:
-        defender_dmg = round(defender_dmg * 1.8)
-    
-    # Новое здоровье
-    new_attacker_hp = max(0, attacker_hp - defender_dmg)
-    new_defender_hp = max(0, defender_hp - attacker_dmg)
-    
-    # Формирование лога
-    log_lines = [f"🎲 РАУНД {round_num}", "=" * 40]
-    
-    if did_dodge_att:
-        log_lines.append(f"💨 {defender[3]} уворачивается от атаки {attacker[3]}!")
-    elif is_crit_att:
-        log_lines.append(f"💥 КРИТ {attacker[3]}! Бросок {attacker_dice} → {attacker_dmg} урона")
-    else:
-        log_lines.append(f"⚔️ {attacker[3]} атакует: бросок {attacker_dice} → {attacker_dmg} урона")
-    
-    if attacker_dmg > 0:
-        log_lines.append(f"❤️ {defender[3]}: {defender_hp} → {new_defender_hp} HP")
-    
-    log_lines.append("-" * 40)
-    
-    if did_dodge_def:
-        log_lines.append(f"💨 {attacker[3]} уворачивается от атаки {defender[3]}!")
-    elif is_crit_def:
-        log_lines.append(f"💥 КРИТ {defender[3]}! Бросок {dice} → {defender_dmg} урона")
-    else:
-        log_lines.append(f"⚔️ {defender[3]} атакует: бросок {dice} → {defender_dmg} урона")
-    
-    if defender_dmg > 0:
-        log_lines.append(f"❤️ {attacker[3]}: {attacker_hp} → {new_attacker_hp} HP")
-    
-    log_lines.append("=" * 40)
-    log_lines.append(f"📊 ИТОГ: {attacker[3]} {new_attacker_hp}/{attacker[8]} HP | {defender[3]} {new_defender_hp}/{defender[8]} HP")
-    log_text = "\n".join(log_lines)
-    
-    # Отправка лога обоим игрокам
-    await message.answer(log_text)
-    try:
-        await bot.send_message(chat_id=attacker[0], text=log_text)
-    except:
-        pass
-    
-    # Обновление БД
-    update_player(attacker[0], current_hp=new_attacker_hp)
-    update_player(defender[0], current_hp=new_defender_hp)
-    
-    # Проверка завершения
-    if new_attacker_hp <= 0 and new_defender_hp <= 0:
-        result = "⚔️ НИЧЬЯ! Оба пали в бою."
-        update_player(attacker[0], current_hp=attacker[8])
-        update_player(defender[0], current_hp=defender[8])
-    elif new_defender_hp <= 0:
-        result = f"✅ {attacker[3]} победил {defender[3]}!"
-        update_player(attacker[0], wins=attacker[13] + 1, current_hp=attacker[8])
-        update_player(defender[0], losses=defender[14] + 1, current_hp=defender[8])
-    elif new_attacker_hp <= 0:
-        result = f"✅ {defender[3]} победил {attacker[3]}!"
-        update_player(defender[0], wins=defender[13] + 1, current_hp=defender[8])
-        update_player(attacker[0], losses=attacker[14] + 1, current_hp=attacker[8])
-    else:
-        # Продолжение боя
-        await state.update_data(
-            attacker_hp=new_attacker_hp,
-            defender_hp=new_defender_hp,
-            round_num=round_num + 1
-        )
-        try:
-            await bot.send_message(
-                chat_id=attacker[0],
-                text=f"🎲 РАУНД {round_num + 1}\n"
-                     f"Ваше здоровье: {new_attacker_hp}/{attacker[8]} HP\n"
-                     f"Здоровье {defender[3]}: {new_defender_hp}/{defender[8]} HP\n"
-                     f"Киньте кубик d20 (1-20):"
-            )
-        except:
-            pass
-        await message.answer(
-            f"🎲 РАУНД {round_num + 1}\n"
-            f"Ваше здоровье: {new_defender_hp}/{defender[8]} HP\n"
-            f"Здоровье {attacker[3]}: {new_attacker_hp}/{attacker[8]} HP\n"
-            f"Ожидайте броска от {attacker[3]}..."
-        )
-        return
-    
-    await state.clear()
-    await message.answer(f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
-    try:
-        await bot.send_message(chat_id=attacker[0], text=f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
-    except:
-        pass
 
 @dp.message(GameStates.waiting_monster_dice)
 async def process_monster_dice(message: types.Message, state: FSMContext):
@@ -935,6 +980,203 @@ async def process_monster_dice(message: types.Message, state: FSMContext):
         )
         await state.set_state(GameStates.waiting_attacker_dice)
 
+# Глобальный обработчик для любых сообщений с числами (для обработки бросков в активных боях)
+@dp.message()
+async def handle_any_message(message: types.Message, state: FSMContext):
+    """Глобальный обработчик для обработки бросков в активных боях"""
+    
+    # Проверяем, является ли сообщение числом 1-20
+    try:
+        dice = int(message.text)
+        if dice < 1 or dice > 20:
+            return  # Не обрабатываем
+    except:
+        return  # Не число
+    
+    # Проверяем, есть ли активный бой для этого игрока
+    battle = get_active_battle(message.from_user.id)
+    
+    if not battle:
+        return  # Нет активного боя
+    
+    # Определяем роль игрока в бою
+    is_attacker = battle[1] == message.from_user.id
+    is_defender = battle[2] == message.from_user.id
+    
+    if not (is_attacker or is_defender):
+        return  # Не участвует в этом бою
+    
+    # Проверяем статус боя
+    if battle[8] == 'completed':
+        await message.answer("❌ Этот бой уже завершён!")
+        return
+    
+    if is_attacker and battle[8] == 'waiting_attacker':
+        # Атакующий кидает кубик
+        await process_pvp_attacker_dice(message, battle, dice, state)
+    
+    elif is_defender and battle[8] == 'waiting_defender':
+        # Защитник кидает кубик
+        await process_pvp_defender_dice(message, battle, dice, state)
+    
+    elif is_attacker and battle[8] == 'waiting_defender':
+        await message.answer("⏳ Ожидайте броска от противника...")
+    
+    elif is_defender and battle[8] == 'waiting_attacker':
+        await message.answer("⏳ Ожидайте броска от противника...")
+
+async def process_pvp_attacker_dice(message, battle, dice, state):
+    """Обработка броска атакующего"""
+    attacker = get_player(battle[1])
+    defender = get_player(battle[2])
+    
+    # Сохраняем бросок в БД
+    update_battle(battle[0], attacker_dice=dice, status='waiting_defender')
+    
+    # Отправляем уведомление защитнику
+    try:
+        await bot.send_message(
+            chat_id=defender[0],
+            text=f"🎲 {attacker[3]} бросил кубик: {dice}\n"
+                 f"Ваша очередь! Киньте кубик d20 и введите результат (1-20):"
+        )
+    except:
+        pass
+    
+    await message.answer(f"✅ Ваш бросок ({dice}) отправлен {defender[3]}.\nОжидайте его ответа...")
+
+async def process_pvp_defender_dice(message, battle, dice, state):
+    """Обработка броска защитника и расчёт боя"""
+    attacker = get_player(battle[1])
+    defender = get_player(battle[2])
+    attacker_dice = battle[3]
+    round_num = battle[7] or 1
+    attacker_hp = battle[5] or attacker[9]
+    defender_hp = battle[6] or defender[9]
+    
+    # Расчёт урона
+    attacker_dmg = calculate_damage(attacker[10], attacker[12], defender[11], defender[12], attacker_dice)
+    defender_dmg = calculate_damage(defender[10], defender[12], attacker[11], attacker[12], dice)
+    
+    # Увороты
+    dodge_chance_att = min(70, max(0, (defender[12] - attacker[12]) * 2))
+    dodge_chance_def = min(70, max(0, (attacker[12] - defender[12]) * 2))
+    
+    did_dodge_att = random.randint(1, 100) <= dodge_chance_att
+    did_dodge_def = random.randint(1, 100) <= dodge_chance_def
+    
+    if did_dodge_att:
+        attacker_dmg = 0
+    if did_dodge_def:
+        defender_dmg = 0
+    
+    # Криты
+    is_crit_att = attacker_dice >= 18
+    is_crit_def = dice >= 18
+    if is_crit_att and not did_dodge_att:
+        attacker_dmg = round(attacker_dmg * 1.8)
+    if is_crit_def and not did_dodge_def:
+        defender_dmg = round(defender_dmg * 1.8)
+    
+    # Новое здоровье
+    new_attacker_hp = max(0, attacker_hp - defender_dmg)
+    new_defender_hp = max(0, defender_hp - attacker_dmg)
+    
+    # Формирование лога
+    log_lines = [f"🎲 РАУНД {round_num}", "=" * 40]
+    
+    if did_dodge_att:
+        log_lines.append(f"💨 {defender[3]} уворачивается от атаки {attacker[3]}!")
+    elif is_crit_att:
+        log_lines.append(f"💥 КРИТ {attacker[3]}! Бросок {attacker_dice} → {attacker_dmg} урона")
+    else:
+        log_lines.append(f"⚔️ {attacker[3]} атакует: бросок {attacker_dice} → {attacker_dmg} урона")
+    
+    if attacker_dmg > 0:
+        log_lines.append(f"❤️ {defender[3]}: {defender_hp} → {new_defender_hp} HP")
+    
+    log_lines.append("-" * 40)
+    
+    if did_dodge_def:
+        log_lines.append(f"💨 {attacker[3]} уворачивается от атаки {defender[3]}!")
+    elif is_crit_def:
+        log_lines.append(f"💥 КРИТ {defender[3]}! Бросок {dice} → {defender_dmg} урона")
+    else:
+        log_lines.append(f"⚔️ {defender[3]} атакует: бросок {dice} → {defender_dmg} урона")
+    
+    if defender_dmg > 0:
+        log_lines.append(f"❤️ {attacker[3]}: {attacker_hp} → {new_attacker_hp} HP")
+    
+    log_lines.append("=" * 40)
+    log_lines.append(f"📊 ИТОГ: {attacker[3]} {new_attacker_hp}/{attacker[8]} HP | {defender[3]} {new_defender_hp}/{defender[8]} HP")
+    log_text = "\n".join(log_lines)
+    
+    # Отправка лога обоим игрокам
+    await message.answer(log_text)
+    try:
+        await bot.send_message(chat_id=attacker[0], text=log_text)
+    except:
+        pass
+    
+    # Обновление БД
+    update_player(attacker[0], current_hp=new_attacker_hp)
+    update_player(defender[0], current_hp=new_defender_hp)
+    
+    # Проверка завершения
+    if new_attacker_hp <= 0 and new_defender_hp <= 0:
+        result = "⚔️ НИЧЬЯ! Оба пали в бою."
+        update_player(attacker[0], current_hp=attacker[8])
+        update_player(defender[0], current_hp=defender[8])
+        complete_battle(battle[0])
+        
+    elif new_defender_hp <= 0:
+        result = f"✅ {attacker[3]} победил {defender[3]}!"
+        update_player(attacker[0], wins=attacker[13] + 1, current_hp=attacker[8])
+        update_player(defender[0], losses=defender[14] + 1, current_hp=defender[8])
+        complete_battle(battle[0])
+        
+    elif new_attacker_hp <= 0:
+        result = f"✅ {defender[3]} победил {attacker[3]}!"
+        update_player(defender[0], wins=defender[13] + 1, current_hp=defender[8])
+        update_player(attacker[0], losses=attacker[14] + 1, current_hp=attacker[8])
+        complete_battle(battle[0])
+        
+    else:
+        # Продолжение боя
+        update_battle(
+            battle[0],
+            attacker_hp=new_attacker_hp,
+            defender_hp=new_defender_hp,
+            round_num=round_num + 1,
+            status='waiting_attacker'
+        )
+        
+        try:
+            await bot.send_message(
+                chat_id=attacker[0],
+                text=f"🎲 РАУНД {round_num + 1}\n"
+                     f"Ваше здоровье: {new_attacker_hp}/{attacker[8]} HP\n"
+                     f"Здоровье {defender[3]}: {new_defender_hp}/{defender[8]} HP\n"
+                     f"Киньте кубик d20 (1-20):"
+            )
+        except:
+            pass
+        
+        await message.answer(
+            f"🎲 РАУНД {round_num + 1}\n"
+            f"Ваше здоровье: {new_defender_hp}/{defender[8]} HP\n"
+            f"Здоровье {attacker[3]}: {new_attacker_hp}/{attacker[8]} HP\n"
+            f"Ожидайте броска от {attacker[3]}..."
+        )
+        return
+    
+    # Завершение боя
+    await message.answer(f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
+    try:
+        await bot.send_message(chat_id=attacker[0], text=f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
+    except:
+        pass
+
 @dp.message(F.text == "📊 Статистика")
 async def stats(message: types.Message):
     players = get_all_players()
@@ -964,15 +1206,11 @@ async def help_cmd(message: types.Message):
         "⚔️ PvP: после выбора противника он получит уведомление.\n"
         "👹 PvE: вы вводите оба броска (свой и за монстра).\n"
         "❤️ После смерти герой воскресает с полным здоровьем.\n"
-        "✨ За победы над монстрами получаете опыт и уровень.\n\n"
+        "✨ За победы над монстрами получаете опыт и уровень.\n"
+        "⭐ Прокачка: улучшайте характеристики за очки навыков.\n\n"
         "Команды:\n"
-        "/start — создать/показать персонажа\n"
-        "/battle — принять вызов на дуэль (если получили уведомление)"
+        "/start — создать/показать персонажа"
     )
-
-@dp.message(Command("battle"))
-async def accept_battle(message: types.Message):
-    await message.answer("ℹ️ Чтобы принять вызов, просто дождитесь сообщения с просьбой ввести бросок кубика и введите число 1-20.")
 
 async def main():
     init_db()
