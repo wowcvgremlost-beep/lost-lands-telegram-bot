@@ -662,35 +662,101 @@ async def process_pvp_attacker_dice(message, battle, dice, state):
     await message.answer(f"✅ Бросок ({dice}) отправлен {defn[3]}.\nОжидайте...")
 
 async def process_pvp_defender_dice(message, battle, dice, state):
-    att = get_player(battle[1]); defn = get_player(battle[2]); att_dice = battle[3]; rn = battle[7] or 1; att_hp = battle[5] or att[9]; def_hp = battle[6] or defn[9]
-    att_dmg = calculate_damage(att[10],att[12],defn[11],defn[12],att_dice); def_dmg = calculate_damage(defn[10],defn[12],att[11],att[12],dice)
-    if random.randint(1,100) <= min(70, max(0, (defn[12]-att[12])*2)): att_dmg = 0  # Уворот защиты
-    if random.randint(1,100) <= min(70, max(0, (att[12]-defn[12])*2)): def_dmg = 0  # Уворот атаки
-    if att_dice >= 18 and att_dmg > 0: att_dmg = round(att_dmg*1.8)
-    if dice >= 18 and def_dmg > 0: def_dmg = round(def_dmg*1.8)
-    new_att_hp = max(0, att_hp - def_dmg); new_def_hp = max(0, def_hp - att_dmg)
-    log_lines = [f"🎲 РАУНД {rn}", "="*40]
-    if att_dmg == 0: log_lines.append(f"💨 {defn[3]} уворачивается от {att[3]}!")
-    elif att_dice >= 18: log_lines.append(f"💥 КРИТ {att[3]}! {att_dice} → {att_dmg} урона")
-    else: log_lines.append(f"⚔️ {att[3]} атакует: {att_dice} → {att_dmg} урона")
-    if att_dmg > 0: log_lines.append(f"❤️ {defn[3]}: {def_hp} → {new_def_hp} HP")
-    log_lines.append("-"*40)
-    if def_dmg == 0: log_lines.append(f"💨 {att[3]} уворачивается от {defn[3]}!")
-    elif dice >= 18: log_lines.append(f"💥 КРИТ {defn[3]}! {dice} → {def_dmg} урона")
-    else: log_lines.append(f"⚔️ {defn[3]} атакует: {dice} → {def_dmg} урона")
-    if def_dmg > 0: log_lines.append(f"❤️ {att[3]}: {att_hp} → {new_att_hp} HP")
-    log_lines.append("="*40); log_lines.append(f"📊 ИТОГ: {att[3]} {new_att_hp}/{att[8]} HP | {defn[3]} {new_def_hp}/{defn[8]} HP")
-    log = "\n".join(log_lines); await message.answer(log); try: await bot.send_message(att[0], log); except: pass
-    update_player(att[0], current_hp=new_att_hp); update_player(defn[0], current_hp=new_def_hp)
-    if new_att_hp <= 0 and new_def_hp <= 0: res = "⚔️ НИЧЬЯ!"; update_player(att[0], current_hp=att[8]); update_player(defn[0], current_hp=defn[8]); complete_battle(battle[0])
-    elif new_def_hp <= 0: res = f"✅ {att[3]} победил {defn[3]}!"; update_player(att[0], wins=att[13]+1, current_hp=att[8]); update_player(defn[0], losses=defn[14]+1, current_hp=defn[8]); complete_battle(battle[0])
-    elif new_att_hp <= 0: res = f"✅ {defn[3]} победил {att[3]}!"; update_player(defn[0], wins=defn[13]+1, current_hp=defn[8]); update_player(att[0], losses=att[14]+1, current_hp=att[8]); complete_battle(battle[0])
+    att = get_player(battle[1])
+    defn = get_player(battle[2])
+    att_dice = battle[3]
+    rn = battle[7] or 1
+    att_hp = battle[5] or att[9]
+    def_hp = battle[6] or defn[9]
+    
+    att_dmg = calculate_damage(att[10], att[12], defn[11], defn[12], att_dice)
+    def_dmg = calculate_damage(defn[10], defn[12], att[11], att[12], dice)
+    
+    # Увороты
+    if random.randint(1, 100) <= min(70, max(0, (defn[12] - att[12]) * 2)):
+        att_dmg = 0
+    if random.randint(1, 100) <= min(70, max(0, (att[12] - defn[12]) * 2)):
+        def_dmg = 0
+    
+    # Криты
+    if att_dice >= 18 and att_dmg > 0:
+        att_dmg = round(att_dmg * 1.8)
+    if dice >= 18 and def_dmg > 0:
+        def_dmg = round(def_dmg * 1.8)
+    
+    new_att_hp = max(0, att_hp - def_dmg)
+    new_def_hp = max(0, def_hp - att_dmg)
+    
+    log_lines = [f"🎲 РАУНД {rn}", "=" * 40]
+    
+    if att_dmg == 0:
+        log_lines.append(f"💨 {defn[3]} уворачивается от {att[3]}!")
+    elif att_dice >= 18:
+        log_lines.append(f"💥 КРИТ {att[3]}! {att_dice} → {att_dmg} урона")
     else:
-        update_battle(battle[0], attacker_hp=new_att_hp, defender_hp=new_def_hp, round_num=rn+1, status='waiting_attacker')
-        try: await bot.send_message(att[0], f"🎲 РАУНД {rn+1}\nВаше здоровье: {new_att_hp}/{att[8]} HP\nЗдоровье {defn[3]}: {new_def_hp}/{defn[8]} HP\nКиньте кубик (1-20):"); except: pass
-        await message.answer(f"🎲 РАУНД {rn+1}\nВаше здоровье: {new_def_hp}/{defn[8]} HP\nЗдоровье {att[3]}: {new_att_hp}/{att[8]} HP\nОжидайте броска...")
+        log_lines.append(f"⚔️ {att[3]} атакует: {att_dice} → {att_dmg} урона")
+    
+    if att_dmg > 0:
+        log_lines.append(f"❤️ {defn[3]}: {def_hp} → {new_def_hp} HP")
+    
+    log_lines.append("-" * 40)
+    
+    if def_dmg == 0:
+        log_lines.append(f"💨 {att[3]} уворачивается от {defn[3]}!")
+    elif dice >= 18:
+        log_lines.append(f"💥 КРИТ {defn[3]}! {dice} → {def_dmg} урона")
+    else:
+        log_lines.append(f"⚔️ {defn[3]} атакует: {dice} → {def_dmg} урона")
+    
+    if def_dmg > 0:
+        log_lines.append(f"❤️ {att[3]}: {att_hp} → {new_att_hp} HP")
+    
+    log_lines.append("=" * 40)
+    log_lines.append(f"📊 ИТОГ: {att[3]} {new_att_hp}/{att[8]} HP | {defn[3]} {new_def_hp}/{defn[8]} HP")
+    
+    log = "\n".join(log_lines)
+    await message.answer(log)
+    
+    # Отправка лога атакующему (в отдельном блоке try-except)
+    try:
+        await bot.send_message(att[0], log)
+    except:
+        pass
+    
+    update_player(att[0], current_hp=new_att_hp)
+    update_player(defn[0], current_hp=new_def_hp)
+    
+    # Проверка завершения боя
+    if new_att_hp <= 0 and new_def_hp <= 0:
+        result = "⚔️ НИЧЬЯ!"
+        update_player(att[0], current_hp=att[8])
+        update_player(defn[0], current_hp=defn[8])
+        complete_battle(battle[0])
+    elif new_def_hp <= 0:
+        result = f"✅ {att[3]} победил {defn[3]}!"
+        update_player(att[0], wins=att[13] + 1, current_hp=att[8])
+        update_player(defn[0], losses=defn[14] + 1, current_hp=defn[8])
+        complete_battle(battle[0])
+    elif new_att_hp <= 0:
+        result = f"✅ {defn[3]} победил {att[3]}!"
+        update_player(defn[0], wins=defn[13] + 1, current_hp=defn[8])
+        update_player(att[0], losses=att[14] + 1, current_hp=att[8])
+        complete_battle(battle[0])
+    else:
+        # Продолжение боя
+        update_battle(battle[0], attacker_hp=new_att_hp, defender_hp=new_def_hp, round_num=rn + 1, status='waiting_attacker')
+        try:
+            await bot.send_message(att[0], f"🎲 РАУНД {rn + 1}\nВаше здоровье: {new_att_hp}/{att[8]} HP\nЗдоровье {defn[3]}: {new_def_hp}/{defn[8]} HP\nКиньте кубик (1-20):")
+        except:
+            pass
+        await message.answer(f"🎲 РАУНД {rn + 1}\nВаше здоровье: {new_def_hp}/{defn[8]} HP\nЗдоровье {att[3]}: {new_att_hp}/{att[8]} HP\nОжидайте броска...")
         return
-    await message.answer(f"{res}\n\nВыберите действие:", reply_markup=get_main_keyboard()); try: await bot.send_message(att[0], f"{res}\n\nВыберите действие:", reply_markup=get_main_keyboard()); except: pass
+    
+    await message.answer(f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
+    try:
+        await bot.send_message(att[0], f"{result}\n\nВыберите действие:", reply_markup=get_main_keyboard())
+    except:
+        pass
 
 @dp.message(F.text == "📊 Статистика")
 async def stats(message: types.Message):
