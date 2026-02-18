@@ -1,5 +1,5 @@
 # ============================================================================
-# ПОТЕРЯННЫЕ ЗЕМЛИ — ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ВЕРСИЯ
+# ПОТЕРЯННЫЕ ЗЕМЛИ — ИСПРАВЛЕННАЯ ВЕРСИЯ
 # ============================================================================
 import os
 import sqlite3
@@ -21,10 +21,12 @@ if not API_TOKEN:
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Состояния FSM
+# Состояния FSM (ИСПРАВЛЕНО: разделены состояния)
 class GameStates(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_class = State()
+    waiting_for_slot = State()      # Выбор слота
+    waiting_for_name = State()      # Ввод имени
+    waiting_for_class = State()     # Выбор класса
+    waiting_for_class_confirm = State()  # Подтверждение класса
     choosing_action = State()
     choosing_hero_to_upgrade = State()
     choosing_stat_to_upgrade = State()
@@ -292,11 +294,21 @@ def get_main_keyboard():
         resize_keyboard=True
     )
 
-def get_class_keyboard():
+def get_class_keyboard(selected_class=None):
+    """Клавиатура выбора класса с кнопкой подтверждения"""
     buttons = []
+    
+    # Кнопки классов
     for cls_name, cls_data in CLASSES.items():
-        buttons.append([KeyboardButton(text=f"{cls_data['emoji']} {cls_name}")])
+        prefix = "✅ " if cls_name == selected_class else ""
+        buttons.append([KeyboardButton(text=f"{prefix}{cls_data['emoji']} {cls_name}")])
+    
+    # Кнопка подтверждения (если выбран класс)
+    if selected_class:
+        buttons.append([KeyboardButton(text="✅ Подтвердить выбор")])
+    
     buttons.append([KeyboardButton(text="🔙 Назад")])
+    
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_battle_type_keyboard():
@@ -391,16 +403,17 @@ async def start(message: types.Message, state: FSMContext):
             "Создайте своего персонажа:\n"
             "1️⃣ Выберите свободный слот (1-6)\n"
             "2️⃣ Введите имя персонажа (уникальное)\n"
-            "3️⃣ Выберите класс\n\n"
+            "3️⃣ Выберите класс и подтвердите выбор\n\n"
             "Выберите слот:",
             reply_markup=get_free_slots_keyboard()
         )
-        await state.set_state(GameStates.waiting_for_name)
+        await state.set_state(GameStates.waiting_for_slot)
 
-@dp.message(GameStates.waiting_for_name)
+@dp.message(GameStates.waiting_for_slot)
 async def process_slot_selection(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
-        await start(message, state)
+        await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+        await state.set_state(GameStates.choosing_action)
         return
     
     try:
@@ -416,9 +429,9 @@ async def process_slot_selection(message: types.Message, state: FSMContext):
         f"✅ Выбран слот {slot}\n\n"
         "📝 Введите имя персонажа (латиницей или кириллицей, без пробелов):"
     )
-    await state.set_state(GameStates.waiting_for_class)
+    await state.set_state(GameStates.waiting_for_name)
 
-@dp.message(GameStates.waiting_for_class)
+@dp.message(GameStates.waiting_for_name)
 async def process_name(message: types.Message, state: FSMContext):
     hero_name = message.text.strip()
     
@@ -465,34 +478,120 @@ async def process_name(message: types.Message, state: FSMContext):
 @dp.message(GameStates.waiting_for_class)
 async def process_class_selection(message: types.Message, state: FSMContext):
     if message.text == "🔙 Назад":
-        await start(message, state)
+        # Возврат к выбору имени
+        await message.answer("📝 Введите имя персонажа:")
+        await state.set_state(GameStates.waiting_for_name)
         return
     
-    # Извлекаем имя класса из кнопки (удаляем эмодзи)
-    class_text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else message.text
+    # Извлекаем имя класса из кнопки (удаляем эмодзи и ✅)
+    class_text = message.text.strip()
+    
+    # Удаляем эмодзи и ✅ в начале
+    for prefix in ['✅ ', '⚔️ ', '🧙 ', '🗡️ ', '🛡️ ', '🏹 ', '🌿 ']:
+        if class_text.startswith(prefix):
+            class_text = class_text[len(prefix):]
+            break
     
     if class_text not in CLASSES:
         await message.answer("❌ Выберите класс из списка!", reply_markup=get_class_keyboard())
         return
     
-    data = await state.get_data()
-    hero_slot = data['hero_slot']
-    hero_name = data['hero_name']
-    hero_class = class_text
+    # Сохраняем выбранный класс
+    await state.update_data(hero_class=class_text)
     
-    telegram_id = message.from_user.id
-    username = message.from_user.username or f"user_{telegram_id}"
+    # Показываем клавиатуру с подтверждением
+    await message.answer(
+        f"🎭 Вы выбрали класс: **{class_text}**\n\n"
+        f"{CLASSES[class_text]['description']}\n\n"
+        f"**Бонусы класса:**\n"
+        f"❤️ HP: {'+' if CLASSES[class_text]['hp_bonus'] > 0 else ''}{CLASSES[class_text]['hp_bonus']}\n"
+        f"⚔️ ATK: {'+' if CLASSES[class_text]['atk_bonus'] > 0 else ''}{CLASSES[class_text]['atk_bonus']}\n"
+        f"🛡️ ARM: {'+' if CLASSES[class_text]['arm_bonus'] > 0 else ''}{CLASSES[class_text]['arm_bonus']}\n"
+        f"🏃 AGI: {'+' if CLASSES[class_text]['agi_bonus'] > 0 else ''}{CLASSES[class_text]['agi_bonus']}\n\n"
+        f"✅ Нажмите 'Подтвердить выбор', чтобы создать персонажа\n"
+        f"🔙 Или выберите другой класс",
+        parse_mode="Markdown",
+        reply_markup=get_class_keyboard(selected_class=class_text)
+    )
+    await state.set_state(GameStates.waiting_for_class_confirm)
+
+@dp.message(GameStates.waiting_for_class_confirm)
+async def confirm_class_selection(message: types.Message, state: FSMContext):
+    if message.text == "🔙 Назад":
+        # Возврат к выбору класса
+        data = await state.get_data()
+        classes_text = "🎭 Выберите класс персонажа:\n\n"
+        for cls_name, cls_data in CLASSES.items():
+            classes_text += f"{cls_data['emoji']} **{cls_name}**\n"
+            classes_text += f"   {cls_data['description']}\n"
+            classes_text += f"   Бонусы: "
+            bonuses = []
+            if cls_data['hp_bonus'] != 0:
+                bonuses.append(f"HP {'+' if cls_data['hp_bonus'] > 0 else ''}{cls_data['hp_bonus']}")
+            if cls_data['atk_bonus'] != 0:
+                bonuses.append(f"ATK {'+' if cls_data['atk_bonus'] > 0 else ''}{cls_data['atk_bonus']}")
+            if cls_data['arm_bonus'] != 0:
+                bonuses.append(f"ARM {'+' if cls_data['arm_bonus'] > 0 else ''}{cls_data['arm_bonus']}")
+            if cls_data['agi_bonus'] != 0:
+                bonuses.append(f"AGI {'+' if cls_data['agi_bonus'] > 0 else ''}{cls_data['agi_bonus']}")
+            classes_text += ", ".join(bonuses) + "\n\n"
+        
+        await message.answer(
+            classes_text,
+            reply_markup=get_class_keyboard(),
+            parse_mode="Markdown"
+        )
+        await state.set_state(GameStates.waiting_for_class)
+        return
     
-    # Создаём персонажа
-    success, msg = create_player(telegram_id, username, hero_slot, hero_name, hero_class)
+    if message.text == "✅ Подтвердить выбор":
+        data = await state.get_data()
+        hero_slot = data['hero_slot']
+        hero_name = data['hero_name']
+        hero_class = data['hero_class']
+        
+        telegram_id = message.from_user.id
+        username = message.from_user.username or f"user_{telegram_id}"
+        
+        # Создаём персонажа
+        success, msg = create_player(telegram_id, username, hero_slot, hero_name, hero_class)
+        
+        if success:
+            player = get_player(telegram_id)
+            await show_character(message, player)
+            await state.set_state(GameStates.choosing_action)
+        else:
+            await message.answer(msg, reply_markup=get_free_slots_keyboard())
+            await state.set_state(GameStates.waiting_for_slot)
+        return
     
-    if success:
-        player = get_player(telegram_id)
-        await show_character(message, player)
-        await state.set_state(GameStates.choosing_action)
-    else:
-        await message.answer(msg, reply_markup=get_free_slots_keyboard())
-        await state.set_state(GameStates.waiting_for_name)
+    # Если пользователь снова нажал на класс
+    class_text = message.text.strip()
+    
+    # Удаляем эмодзи и ✅ в начале
+    for prefix in ['✅ ', '⚔️ ', '🧙 ', '🗡️ ', '🛡️ ', '🏹 ', '🌿 ']:
+        if class_text.startswith(prefix):
+            class_text = class_text[len(prefix):]
+            break
+    
+    if class_text in CLASSES:
+        await state.update_data(hero_class=class_text)
+        await message.answer(
+            f"🎭 Вы выбрали класс: **{class_text}**\n\n"
+            f"{CLASSES[class_text]['description']}\n\n"
+            f"**Бонусы класса:**\n"
+            f"❤️ HP: {'+' if CLASSES[class_text]['hp_bonus'] > 0 else ''}{CLASSES[class_text]['hp_bonus']}\n"
+            f"⚔️ ATK: {'+' if CLASSES[class_text]['atk_bonus'] > 0 else ''}{CLASSES[class_text]['atk_bonus']}\n"
+            f"🛡️ ARM: {'+' if CLASSES[class_text]['arm_bonus'] > 0 else ''}{CLASSES[class_text]['arm_bonus']}\n"
+            f"🏃 AGI: {'+' if CLASSES[class_text]['agi_bonus'] > 0 else ''}{CLASSES[class_text]['agi_bonus']}\n\n"
+            f"✅ Нажмите 'Подтвердить выбор', чтобы создать персонажа\n"
+            f"🔙 Или выберите другой класс",
+            parse_mode="Markdown",
+            reply_markup=get_class_keyboard(selected_class=class_text)
+        )
+        return
+    
+    await message.answer("❌ Используйте кнопки для выбора!")
 
 async def show_character(message: types.Message, player):
     cls = CLASSES[player[4]]
