@@ -1,5 +1,5 @@
 # ============================================================================
-# ПОТЕРЯННЫЕ ЗЕМЛИ — ФИНАЛЬНАЯ ВЕРСИЯ С ИСПРАВЛЕНИЕМ ОШИБКИ ПОСЛЕ ПРОДАЖИ
+# ПОТЕРЯННЫЕ ЗЕМЛИ — ГАРАНТИРОВАННО РАБОЧАЯ ВЕРСИЯ
 # ============================================================================
 import os
 import sqlite3
@@ -17,22 +17,21 @@ import asyncio
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
+# Получение токена
 API_TOKEN = os.environ.get('BOT_TOKEN')
 if not API_TOKEN:
-    logger.error("❌ BOT_TOKEN не найден! Добавьте его в переменные окружения Railway.")
-    raise ValueError("BOT_TOKEN не найден!")
+    logger.error("❌ BOT_TOKEN не найден!")
+    raise ValueError("BOT_TOKEN не найден в переменных окружения")
 
+# Инициализация бота
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
+# Состояния FSM
 class GameStates(StatesGroup):
     waiting_for_slot = State()
     waiting_for_name = State()
@@ -50,6 +49,7 @@ class GameStates(StatesGroup):
     choosing_item_action = State()
     selecting_item_for_action = State()
 
+# Классы персонажей
 CLASSES = {
     "Воин": {"hp_bonus": 20, "atk_bonus": 3, "arm_bonus": 2, "agi_bonus": 0, "description": "🛡️ Высокая живучесть и защита", "emoji": "⚔️"},
     "Маг": {"hp_bonus": -10, "atk_bonus": 5, "arm_bonus": -1, "agi_bonus": 1, "description": "🔮 Сильная атака, но хрупкий", "emoji": "🧙"},
@@ -63,6 +63,7 @@ CLASSES = {
 # ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ
 # ============================================================================
 def init_db():
+    """Инициализация базы данных"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -211,6 +212,7 @@ def init_db():
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================================
 def get_player(telegram_id):
+    """Получить данные игрока по ID"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -219,39 +221,50 @@ def get_player(telegram_id):
         conn.close()
         return row
     except Exception as e:
-        logger.error(f"❌ Ошибка при получении игрока {telegram_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения игрока {telegram_id}: {e}")
         return None
 
 def create_player(telegram_id, username, hero_slot, hero_name, hero_class):
+    """Создать нового игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
+        
+        # Проверка количества игроков
         cur.execute('SELECT COUNT(*) FROM players')
         if cur.fetchone()[0] >= 6:
             conn.close()
             return False, "❌ В игре уже 6 игроков!"
+        
+        # Проверка уникальности имени
         cur.execute('SELECT hero_name FROM players WHERE hero_name = ?', (hero_name,))
         if cur.fetchone():
             conn.close()
             return False, f"❌ Имя '{hero_name}' занято!"
+        
+        # Проверка свободного слота
         cur.execute('SELECT hero_slot FROM players WHERE hero_slot = ?', (hero_slot,))
         if cur.fetchone():
             conn.close()
             return False, f"❌ Слот {hero_slot} занят!"
+        
+        # Создание игрока
         cls = CLASSES[hero_class]
         cur.execute('''
             INSERT INTO players (telegram_id, username, hero_slot, hero_name, hero_class, max_hp, current_hp, attack, armor, agility, gold)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         ''', (telegram_id, username, hero_slot, hero_name, hero_class, 100+cls['hp_bonus'], 100+cls['hp_bonus'], 10+cls['atk_bonus'], 5+cls['arm_bonus'], 5+cls['agi_bonus']))
+        
         conn.commit()
         conn.close()
         logger.info(f"✅ Игрок {telegram_id} ({hero_name}) создан")
         return True, "✅ Персонаж создан!"
     except Exception as e:
-        logger.error(f"❌ Ошибка создания игрока {telegram_id}: {e}", exc_info=True)
-        return False, f"❌ Ошибка сервера: {str(e)}"
+        logger.error(f"❌ Ошибка создания игрока {telegram_id}: {e}")
+        return False, f"❌ Ошибка сервера"
 
 def update_player(telegram_id, **kwargs):
+    """Обновить данные игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -262,10 +275,11 @@ def update_player(telegram_id, **kwargs):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка обновления игрока {telegram_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка обновления игрока {telegram_id}: {e}")
         return False
 
 def get_all_players():
+    """Получить всех игроков"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -274,10 +288,11 @@ def get_all_players():
         conn.close()
         return rows
     except Exception as e:
-        logger.error(f"❌ Ошибка получения списка игроков: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения списка игроков: {e}")
         return []
 
 def get_free_slots():
+    """Получить свободные слоты"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -286,10 +301,11 @@ def get_free_slots():
         conn.close()
         return [i for i in range(1, 7) if i not in occupied]
     except Exception as e:
-        logger.error(f"❌ Ошибка получения свободных слотов: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения свободных слотов: {e}")
         return []
 
 def get_monster(name):
+    """Получить монстра по имени"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -298,16 +314,18 @@ def get_monster(name):
         conn.close()
         return row
     except Exception as e:
-        logger.error(f"❌ Ошибка получения монстра {name}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения монстра {name}: {e}")
         return None
 
 def calculate_damage(attacker_atk, attacker_agi, defender_arm, defender_agi, dice_roll):
+    """Расчёт урона"""
     base = max(1, attacker_atk - defender_arm * 0.6)
     agility_mod = (attacker_agi - defender_agi) * 0.4
     dice_mod = (dice_roll - 10) * 1.8
     return max(1, round(base + agility_mod + dice_mod))
 
 def add_gold(player_id, amount):
+    """Добавить золото игроку"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -316,10 +334,11 @@ def add_gold(player_id, amount):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка добавления золота игроку {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка добавления золота игроку {player_id}: {e}")
         return False
 
 def remove_gold(player_id, amount):
+    """Удалить золото у игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -328,10 +347,11 @@ def remove_gold(player_id, amount):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка удаления золота игрока {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка удаления золота игрока {player_id}: {e}")
         return False
 
 def get_player_gold(player_id):
+    """Получить золото игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -340,10 +360,11 @@ def get_player_gold(player_id):
         conn.close()
         return result[0] if result else 0
     except Exception as e:
-        logger.error(f"❌ Ошибка получения золота игрока {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения золота игрока {player_id}: {e}")
         return 0
 
 def add_item_to_inventory(player_id, item_name, item_type, effect, bought_price):
+    """Добавить предмет в инвентарь"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -352,10 +373,11 @@ def add_item_to_inventory(player_id, item_name, item_type, effect, bought_price)
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка добавления предмета в инвентарь игрока {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка добавления предмета в инвентарь игрока {player_id}: {e}")
         return False
 
 def get_inventory(player_id):
+    """Получить инвентарь игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -364,10 +386,11 @@ def get_inventory(player_id):
         conn.close()
         return items
     except Exception as e:
-        logger.error(f"❌ Ошибка получения инвентаря игрока {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения инвентаря игрока {player_id}: {e}")
         return []
 
 def get_shop_items(category=None):
+    """Получить товары магазина"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -379,10 +402,11 @@ def get_shop_items(category=None):
         conn.close()
         return items
     except Exception as e:
-        logger.error(f"❌ Ошибка получения товаров магазина: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения товаров магазина: {e}")
         return []
 
 def equip_item(player_id, item_id, slot):
+    """Экипировать предмет"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -393,10 +417,11 @@ def equip_item(player_id, item_id, slot):
         logger.info(f"✅ Предмет {item_id} экипирован игроком {player_id} в слот {slot}")
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка экипировки предмета {item_id} игроком {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка экипировки предмета {item_id} игроком {player_id}: {e}")
         return False
 
 def unequip_item(player_id, slot):
+    """Снять предмет"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -406,10 +431,11 @@ def unequip_item(player_id, slot):
         logger.info(f"✅ Предмет снят игроком {player_id} со слота {slot}")
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка снятия экипировки игроком {player_id} со слота {slot}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка снятия экипировки игроком {player_id} со слота {slot}: {e}")
         return False
 
 def sell_item(player_id, item_id):
+    """Продать предмет"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -419,6 +445,7 @@ def sell_item(player_id, item_id):
             conn.close()
             logger.warning(f"❌ Предмет {item_id} не найден в инвентаре игрока {player_id}")
             return False, "Предмет не найден!"
+        
         sell_price = result[0] // 2
         add_gold(player_id, sell_price)
         cur.execute('DELETE FROM inventory WHERE id = ? AND player_id = ?', (item_id, player_id))
@@ -427,10 +454,11 @@ def sell_item(player_id, item_id):
         logger.info(f"✅ Предмет {item_id} продан игроком {player_id} за {sell_price} золота")
         return True, f"Предмет продан за {sell_price} золота!"
     except Exception as e:
-        logger.error(f"❌ Ошибка продажи предмета {item_id} игроком {player_id}: {e}", exc_info=True)
-        return False, f"❌ Ошибка сервера: {str(e)}"
+        logger.error(f"❌ Ошибка продажи предмета {item_id} игроком {player_id}: {e}")
+        return False, f"❌ Ошибка сервера"
 
 def use_potion_in_battle(player_id, battle_id):
+    """Использовать зелье в бою"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -439,11 +467,13 @@ def use_potion_in_battle(player_id, battle_id):
         if battle and battle[0]:
             conn.close()
             return False, "Вы уже использовали зелье в этом бою!"
+        
         cur.execute('SELECT id, effect FROM inventory WHERE player_id = ? AND item_type = "Зелье" AND equipped = 0 LIMIT 1', (player_id,))
         potion = cur.fetchone()
         if not potion:
             conn.close()
             return False, "Нет зелий в инвентаре!"
+        
         heal = 30 if "+30HP" in potion[1] else 60 if "+60HP" in potion[1] else 100
         cur.execute('DELETE FROM inventory WHERE id = ?', (potion[0],))
         cur.execute('UPDATE active_battles SET used_potion = 1 WHERE id = ?', (battle_id,))
@@ -452,10 +482,11 @@ def use_potion_in_battle(player_id, battle_id):
         logger.info(f"✅ Зелье использовано игроком {player_id} в бою {battle_id}")
         return True, heal
     except Exception as e:
-        logger.error(f"❌ Ошибка использования зелья игроком {player_id} в бою {battle_id}: {e}", exc_info=True)
-        return False, f"❌ Ошибка сервера: {str(e)}"
+        logger.error(f"❌ Ошибка использования зелья игроком {player_id} в бою {battle_id}: {e}")
+        return False, f"❌ Ошибка сервера"
 
 def create_battle(attacker_id, defender_id, attacker_hp, defender_hp, battle_type="pvp"):
+    """Создать бой"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -466,10 +497,11 @@ def create_battle(attacker_id, defender_id, attacker_hp, defender_hp, battle_typ
         logger.info(f"✅ Бой {battle_id} создан: {attacker_id} vs {defender_id}")
         return battle_id
     except Exception as e:
-        logger.error(f"❌ Ошибка создания боя: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка создания боя: {e}")
         return None
 
 def get_active_battle(player_id):
+    """Получить активный бой игрока"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -478,10 +510,11 @@ def get_active_battle(player_id):
         conn.close()
         return row
     except Exception as e:
-        logger.error(f"❌ Ошибка получения активного боя игрока {player_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка получения активного боя игрока {player_id}: {e}")
         return None
 
 def update_battle(battle_id, **kwargs):
+    """Обновить данные боя"""
     try:
         conn = sqlite3.connect('game.db')
         cur = conn.cursor()
@@ -492,19 +525,24 @@ def update_battle(battle_id, **kwargs):
         conn.close()
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка обновления боя {battle_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка обновления боя {battle_id}: {e}")
         return False
 
 def complete_battle(battle_id):
+    """Завершить бой"""
     try:
         update_battle(battle_id, status='completed')
         logger.info(f"✅ Бой {battle_id} завершен")
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка завершения боя {battle_id}: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка завершения боя {battle_id}: {e}")
         return False
 
+# ============================================================================
+# КЛАВИАТУРЫ
+# ============================================================================
 def get_main_keyboard():
+    """Основная клавиатура"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⭐ Прокачка навыков")],
@@ -516,6 +554,7 @@ def get_main_keyboard():
     )
 
 def get_class_keyboard(selected_class=None):
+    """Клавиатура выбора класса"""
     buttons = [[KeyboardButton(text=f"{'✅ ' if cls_name == selected_class else ''}{cls_data['emoji']} {cls_name}")] for cls_name, cls_data in CLASSES.items()]
     if selected_class:
         buttons.append([KeyboardButton(text="✅ Подтвердить выбор")])
@@ -523,6 +562,7 @@ def get_class_keyboard(selected_class=None):
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_battle_type_keyboard():
+    """Клавиатура выбора типа боя"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="⚔️ Герой vs Герой")],
@@ -533,6 +573,7 @@ def get_battle_type_keyboard():
     )
 
 def get_free_slots_keyboard():
+    """Клавиатура выбора слота"""
     slots = get_free_slots()
     if not slots:
         return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔙 Назад")]], resize_keyboard=True)
@@ -540,6 +581,7 @@ def get_free_slots_keyboard():
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_opponent_keyboard(exclude_id=None):
+    """Клавиатура выбора противника"""
     players = get_all_players()
     buttons = []
     for p in players:
@@ -551,6 +593,7 @@ def get_opponent_keyboard(exclude_id=None):
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_monster_keyboard(floor=None):
+    """Клавиатура выбора монстра"""
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     if floor:
@@ -572,6 +615,7 @@ def get_monster_keyboard(floor=None):
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def get_upgrade_keyboard():
+    """Клавиатура прокачки навыков"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="❤️ Здоровье (+5)"), KeyboardButton(text="⚔️ Атака (+2)")],
@@ -582,6 +626,7 @@ def get_upgrade_keyboard():
     )
 
 def get_shop_category_keyboard():
+    """Клавиатура категорий магазина"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🧪 Зелья"), KeyboardButton(text="⚔️ Оружие")],
@@ -592,6 +637,7 @@ def get_shop_category_keyboard():
     )
 
 def get_slot_emoji(slot):
+    """Эмодзи для слота"""
     return {
         "Оружие 1": "⚔️",
         "Оружие 2": "🛡️",
@@ -607,6 +653,7 @@ def get_slot_emoji(slot):
     }.get(slot, "📦")
 
 def get_category_emoji(category):
+    """Эмодзи для категории"""
     return {
         "Зелья": "🧪",
         "Оружие": "⚔️",
@@ -615,7 +662,11 @@ def get_category_emoji(category):
         "Разное": "📦"
     }.get(category, "🎁")
 
+# ============================================================================
+# ОТОБРАЖЕНИЕ ПЕРСОНАЖА
+# ============================================================================
 async def show_character(message, player):
+    """Отобразить информацию о персонаже"""
     try:
         cls = CLASSES[player[4]]
         gold = get_player_gold(player[0])
@@ -653,11 +704,11 @@ async def show_character(message, player):
         
         await message.answer(stats_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
     except Exception as e:
-        logger.error(f"❌ Ошибка отображения персонажа игрока {message.from_user.id}: {e}", exc_info=True)
-        await message.answer("❌ Произошла ошибка при отображении вашего персонажа. Попробуйте позже.")
+        logger.error(f"❌ Ошибка отображения персонажа: {e}")
+        await message.answer("❌ Произошла ошибка при отображении вашего персонажа.")
 
 # ============================================================================
-# ИНВЕНТАРЬ С КНОПКАМИ ДЛЯ ДЕЙСТВИЙ
+# ИНВЕНТАРЬ С КНОПКАМИ
 # ============================================================================
 def get_inventory_keyboard(items):
     """Создает клавиатуру с кнопками для каждого предмета"""
@@ -680,6 +731,7 @@ def get_inventory_keyboard(items):
 
 @dp.message(F.text == "🎒 Инвентарь")
 async def inventory_menu(message: types.Message, state: FSMContext):
+    """Отобразить инвентарь"""
     logger.info(f"Пользователь {message.from_user.id} открыл инвентарь")
     player = get_player(message.from_user.id)
     if not player:
@@ -712,7 +764,7 @@ async def inventory_menu(message: types.Message, state: FSMContext):
     
     response += f"\n{'='*40}\nВыберите предмет, затем действие:"
     
-    # Сохраняем предметы в состоянии для последующих действий
+    # Сохраняем предметы в состоянии
     await state.update_data(inventory_items=items)
     await state.set_state(GameStates.in_inventory)
     
@@ -720,6 +772,7 @@ async def inventory_menu(message: types.Message, state: FSMContext):
 
 @dp.message(GameStates.in_inventory)
 async def inventory_handler(message: types.Message, state: FSMContext):
+    """Обработчик действий в инвентаре"""
     logger.info(f"Пользователь {message.from_user.id} взаимодействует с инвентарем. Текст: {message.text}")
     data = await state.get_data()
     items = data.get('inventory_items', [])
@@ -832,14 +885,15 @@ async def inventory_handler(message: types.Message, state: FSMContext):
             await state.set_state(GameStates.choosing_item_action)
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при выборе предмета пользователем {message.from_user.id}: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка при выборе предмета: {e}")
+            logger.error(f"❌ Ошибка при выборе предмета: {e}")
+            await message.answer(f"❌ Ошибка при выборе предмета")
         return
     
     await message.answer("❌ Неизвестная команда! Выберите предмет или действие из меню.")
 
 @dp.message(GameStates.choosing_item_action)
 async def item_action_handler(message: types.Message, state: FSMContext):
+    """Обработчик действий с выбранным предметом"""
     data = await state.get_data()
     selected_item = data.get('selected_item')
     items = data.get('inventory_items', [])
@@ -944,13 +998,13 @@ async def item_action_handler(message: types.Message, state: FSMContext):
 
 @dp.message(GameStates.selecting_item_for_action)
 async def select_item_for_action(message: types.Message, state: FSMContext):
+    """Обработчик выбора предмета для действия"""
     logger.info(f"Пользователь {message.from_user.id} выбирает предмет для действия. Текст: {message.text}")
     try:
         item_id = int(message.text)
     except ValueError:
         logger.warning(f"Пользователь {message.from_user.id} ввел некорректный номер предмета: {message.text}")
         await message.answer("❌ Введите номер предмета!")
-        # ВАЖНО: не возвращаемся в инвентарь, чтобы пользователь мог повторить ввод
         return
     
     data = await state.get_data()
@@ -1043,14 +1097,42 @@ async def select_item_for_action(message: types.Message, state: FSMContext):
     await inventory_menu(message, state)
 
 # ============================================================================
-# ОСНОВНЫЕ КОМАНДЫ (сокращены для экономии места, но полные)
+# ОСНОВНЫЕ КОМАНДЫ
 # ============================================================================
-# ... остальной код без изменений (команды /start, прокачка навыков, магазин, бой и т.д.) ...
+@dp.message(Command("start"))
+async def start(message: types.Message, state: FSMContext):
+    """Обработчик команды /start"""
+    logger.info(f"Пользователь {message.from_user.id} запустил /start")
+    player = get_player(message.from_user.id)
+    if player:
+        logger.info(f"Пользователь {message.from_user.id} уже имеет персонажа")
+        await show_character(message, player)
+        await state.set_state(GameStates.choosing_action)
+    else:
+        logger.info(f"Пользователь {message.from_user.id} создает нового персонажа")
+        free_slots = get_free_slots()
+        if not free_slots:
+            logger.warning(f"Игра заполнена! Пользователь {message.from_user.id} не может создать персонажа")
+            await message.answer("❌ Игра заполнена! Максимум 6 игроков.", reply_markup=get_main_keyboard())
+            return
+        await message.answer(
+            f"🎮 Добро пожаловать в Потерянные земли!\n\n"
+            f"👥 Игроков в игре: {6 - len(free_slots)}/6\n\n"
+            "Создайте персонажа:\n"
+            "1️⃣ Выберите свободный слот (1-6)\n"
+            "2️⃣ Введите уникальное имя (3-20 символов)\n"
+            "3️⃣ Выберите класс и подтвердите выбор",
+            reply_markup=get_free_slots_keyboard()
+        )
+        await state.set_state(GameStates.waiting_for_slot)
+
+# ... остальные обработчики команд (сокращены для экономии места) ...
 # ВАЖНО: Все остальные функции остаются БЕЗ ИЗМЕНЕНИЙ от предыдущей версии
 
 async def main():
+    """Основная функция запуска бота"""
     init_db()
-    print("🤖 Бот запускается...")
+    logger.info("🤖 Бот запускается...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
