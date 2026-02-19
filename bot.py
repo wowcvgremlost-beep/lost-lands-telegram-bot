@@ -53,26 +53,19 @@ def init_db():
     
     # Таблица игроков (с gold)
     cur.execute('''
-        CREATE TABLE IF NOT EXISTS players (
-            telegram_id INTEGER PRIMARY KEY,
-            username TEXT,
-            hero_slot INTEGER,
-            hero_name TEXT,
-            hero_class TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            skill_points INTEGER DEFAULT 0,
-            max_hp INTEGER DEFAULT 100,
-            current_hp INTEGER DEFAULT 100,
-            attack INTEGER DEFAULT 10,
-            armor INTEGER DEFAULT 5,
-            agility INTEGER DEFAULT 5,
-            wins INTEGER DEFAULT 0,
-            losses INTEGER DEFAULT 0,
-            gold INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    CREATE TABLE IF NOT EXISTS inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_id INTEGER,
+        item_name TEXT,
+        item_type TEXT,
+        effect TEXT,
+        equipped BOOLEAN DEFAULT 0,
+        slot TEXT,
+        bought_price INTEGER,
+        level INTEGER DEFAULT 1,
+        max_level INTEGER DEFAULT 5  -- Максимальный уровень предмета
+    )
+''')
     
     # Таблица монстров (ОБЯЗАТЕЛЬНО!)
     cur.execute('''
@@ -313,12 +306,15 @@ def complete_battle(battle_id):
     update_battle(battle_id, status='completed')
 
 def get_main_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⭐ Прокачка навыков")],
-        [KeyboardButton(text="🎒 Инвентарь"), KeyboardButton(text="🛒 Магазин")],
-        [KeyboardButton(text="⚔️ Бой"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="❓ Помощь")]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👤 Мой персонаж"), KeyboardButton(text="⭐ Прокачка навыков")],
+            [KeyboardButton(text="🎒 Инвентарь"), KeyboardButton(text="🔥 Skill Tree")],
+            [KeyboardButton(text="⚔️ Бой"), KeyboardButton(text="💰 Earn")],
+            [KeyboardButton(text="❓ Помощь")]
+        ],
+        resize_keyboard=True
+    )
 
 def get_class_keyboard(selected_class=None):
     buttons = [[KeyboardButton(text=f"{'✅ ' if cls_name == selected_class else ''}{cls_data['emoji']} {cls_name}")] for cls_name, cls_data in CLASSES.items()]
@@ -391,11 +387,46 @@ def get_category_emoji(category):
     return emojis.get(category, "🎁")
 
 async def show_character(message, player):
-    cls = CLASSES[player[4]]; gold = get_player_gold(player[0])
-    conn = sqlite3.connect('game.db'); cur = conn.cursor(); cur.execute('SELECT item_name, slot FROM inventory WHERE player_id = ? AND equipped = 1', (player[0],)); equipped = cur.fetchall(); conn.close()
-    equipment_text = "\n".join([f"{get_slot_emoji(slot)} {slot}: {name}" for name, slot in sorted(equipped, key=lambda x: x[1])]) or "📭 Нет экипировки"
-    stats = f"👤 **{player[3]}** {cls['emoji']}\n🎭 Класс: {player[4]}\n📊 Уровень: {player[5]} | Опыт: {player[6]}/{player[5]*100}\n⭐ Очков навыков: {player[7]}\n💰 Золото: {gold}\n\n❤️ Здоровье: {player[9]}/{player[8]}\n⚔️ Атака: {player[10]}\n🛡️ Броня: {player[11]}\n🏃 Ловкость: {player[12]}\n\n🏆 Побед: {player[13]} | Поражений: {player[14]}\n\n🛡️ ЭКИПИРОВКА:\n{equipment_text}"
-    await message.answer(stats, parse_mode="Markdown", reply_markup=get_main_keyboard())
+    cls = CLASSES[player[4]]
+    gold = get_player_gold(player[0])
+    
+    # Получаем экипировку
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('SELECT item_name, slot, level FROM inventory WHERE player_id = ? AND equipped = 1', (player[0],))
+    equipped = cur.fetchall()
+    conn.close()
+    
+    # Форматируем статистику
+    stats_text = (
+        f"👤 **{player[3]}** {cls['emoji']}\n"
+        f"🎭 Класс: {player[4]}\n"
+        f"📊 Уровень: {player[5]} | Опыт: {player[6]}/{player[5] * 100}\n"
+        f"⭐ Очков навыков: {player[7]}\n"
+        f"💰 Золото: {gold}\n\n"
+    )
+    
+    # Визуализация характеристик
+    stats_text += f"⚔️ Attack: {'█' * (player[10] // 5)} {player[10]}\n"
+    stats_text += f"💪 Power: {'█' * (player[10] // 5)} {player[10]}\n"
+    stats_text += f"❤️ HP: {'█' * (player[9] // 50)} {player[9]}/{player[8]}\n\n"
+    
+    # Экипировка
+    equipment_text = "🛡️ ЭКИПИРОВКА:\n"
+    slots_order = ["Оружие 1", "Оружие 2", "Экипировка 1", "Экипировка 2", "Экипировка 3", 
+                   "Экипировка 4", "Экипировка 5", "Экипировка 6", "Аксессуар 1", "Аксессуар 2", "Аксессуар 3"]
+    
+    for slot in slots_order:
+        item = next((e for e in equipped if e[1] == slot), None)
+        if item:
+            equipment_text += f"{get_slot_emoji(slot)} {slot}: {item[0]} (Ур. {item[2]})\n"
+    
+    if not equipment_text.endswith("ЭКИПИРОВКА:\n"):
+        stats_text += equipment_text
+    else:
+        stats_text += "📭 Нет экипировки"
+    
+    await message.answer(stats_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 # ============================================================================
 # ОСНОВНЫЕ КОМАНДЫ
@@ -541,6 +572,72 @@ async def process_upgrade(message: types.Message, state: FSMContext):
     await message.answer(f"✅ +{bonus} к {name}\n⭐ Осталось: {p[7]}\n\n❤️ {p[9]}/{p[8]} HP\n⚔️ {p[10]} ATK | 🛡️ {p[11]} ARM | 🏃 {p[12]} AGI", reply_markup=get_main_keyboard())
     await state.clear()
 
+@dp.message(F.text == "🔥 Прокачать предмет")
+async def upgrade_item(message: types.Message, state: FSMContext):
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Создайте персонажа: /start")
+        return
+    
+    items = get_inventory(message.from_user.id)
+    if not items:
+        await message.answer("📭 Инвентарь пуст! Посетите магазин.")
+        return
+    
+    # Показать предметы для прокачки
+    response = "🔥 ВЫБЕРИТЕ ПРЕДМЕТ ДЛЯ ПРОКАЧКИ:\n\n"
+    for i, item in enumerate(items, 1):
+        response += f"{i}. {item[2]} (Ур. {item[8]}/{item[9]})\n"
+    
+    response += "\nВведите номер предмета для прокачки:"
+    await message.answer(response)
+    await state.set_state(GameStates.choosing_item_to_upgrade)
+
+@dp.message(F.text == "🎒 Инвентарь")
+async def inventory_menu(message: types.Message, state: FSMContext):
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Создайте персонажа: /start")
+        return
+    
+    items = get_inventory(message.from_user.id)
+    
+    if not items:
+        await message.answer("📭 Инвентарь пуст! Посетите магазин.")
+        return
+    
+    # Группируем предметы по категориям
+    categories = {
+        "All": [],
+        "Burn items": [],
+        "Forge": [],
+        "Jewelry": []
+    }
+    
+    for item in items:
+        # Определяем категорию по типу
+        if "Зелье" in item[3]:
+            categories["All"].append(item)
+            categories["Burn items"].append(item)
+        elif item[3] in ["Оружие 1", "Оружие 2", "Экипировка 1", "Экипировка 2", "Экипировка 3", "Экипировка 4", "Экипировка 5", "Экипировка 6"]:
+            categories["All"].append(item)
+            categories["Forge"].append(item)
+        elif item[3] in ["Аксессуар 1", "Аксессуар 2", "Аксессуар 3"]:
+            categories["All"].append(item)
+            categories["Jewelry"].append(item)
+    
+    # Показываем текущую категорию
+    current_category = "All"
+    response = f"🎒 ИНВЕНТАРЬ - {current_category}\n" + "="*40 + "\n\n"
+    
+    for i, item in enumerate(categories[current_category], 1):
+        status = "✅ Экипировано" if item[5] else "🔲 В инвентаре"
+        response += f"{i}. {item[2]} (Ур. {item[8]}/{item[9]}) | {item[3]} | {status}\n"
+    
+    response += f"\n{'='*40}\nКоманды:\n• Экипировать [номер]\n• Снять [слот]\n• Продать [номер]\n• 🔥 Прокачать предмет"
+    await message.answer(response)
+    await state.set_state(GameStates.in_inventory)
+
 # ============================================================================
 # ИСПРАВЛЕННЫЙ МАГАЗИН (работает без ошибок)
 # ============================================================================
@@ -646,6 +743,24 @@ async def shop_handler(message: types.Message, state: FSMContext):
         )
         await state.update_data(last_purchase=item[1])
         return
+
+    @dp.message(F.text == "🔥 Skill Tree")
+async def skill_tree(message: types.Message, state: FSMContext):
+    player = get_player(message.from_user.id)
+    if not player:
+        await message.answer("❌ Создайте персонажа: /start")
+        return
+    
+    # Здесь будет отображаться дерево навыков
+    await message.answer(
+        "🔥 ДЕРЕВО НАВЫКОВ\n"
+        "{'='*40}\n\n"
+        "1. Сила: +1 Атака за 5 очков\n"
+        "2. Ловкость: +1 Ловкость за 5 очков\n"
+        "3. Броня: +1 Броня за 5 очков\n\n"
+        "Выберите навык для прокачки:",
+        reply_markup=get_upgrade_keyboard()
+    )
     
     # === ВЫБОР КАТЕГОРИИ (если введён текст категории) ===
     category_map = {
