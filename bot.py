@@ -1,5 +1,5 @@
 # ============================================================================
-# ПОТЕРЯННЫЕ ЗЕМЛИ — ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ
+# ПОТЕРЯННЫЕ ЗЕМЛИ — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
 # ============================================================================
 import os
 import sqlite3
@@ -807,7 +807,7 @@ async def shop_menu(message: types.Message, state: FSMContext):
 
 @dp.message(GameStates.in_shop_category)
 async def shop_handler(message: types.Message, state: FSMContext):
-    if message.text == "🔙 Назад":
+    if message.text == "🔙 Назад" or message.text == "🔙 В главное меню":
         await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
         await state.clear()
         return
@@ -878,6 +878,7 @@ async def shop_handler(message: types.Message, state: FSMContext):
             return
         elif message.text == "🎒 Открыть инвентарь":
             await inventory_menu(message, state)
+            await state.set_state(GameStates.in_inventory)
             return
         elif message.text == "🔙 В главное меню":
             await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
@@ -920,7 +921,7 @@ async def shop_handler(message: types.Message, state: FSMContext):
     return
 
 # ============================================================================
-# ИНВЕНТАРЬ
+# ИНВЕНТАРЬ (ИСПРАВЛЕННЫЙ)
 # ============================================================================
 @dp.message(F.text == "🎒 Инвентарь")
 async def inventory_menu(message: types.Message, state: FSMContext):
@@ -953,10 +954,11 @@ async def inventory_menu(message: types.Message, state: FSMContext):
 
 @dp.message(GameStates.in_inventory)
 async def inv_handler(message: types.Message, state: FSMContext):
-    if message.text == "🔙 Назад":
+    if message.text == "🔙 Назад" or message.text == "🔙 В главное меню":
         await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
         await state.clear()
         return
+    
     if message.text.startswith("Экипировать "):
         try:
             item_id = int(message.text.split()[1])
@@ -990,10 +992,16 @@ async def inv_handler(message: types.Message, state: FSMContext):
             return
         equip_item(message.from_user.id, item_id, slot)
         await message.answer(f"✅ {item[2]} экипировано в слот {slot}!")
+        await inventory_menu(message, state)
+        return
+    
     elif message.text.startswith("Снять "):
         slot = message.text.split(maxsplit=1)[1]
         unequip_item(message.from_user.id, slot)
         await message.answer(f"✅ Предмет снят со слота {slot}!")
+        await inventory_menu(message, state)
+        return
+    
     elif message.text.startswith("Продать "):
         try:
             item_id = int(message.text.split()[1])
@@ -1002,6 +1010,9 @@ async def inv_handler(message: types.Message, state: FSMContext):
             return
         success, msg = sell_item(message.from_user.id, item_id)
         await message.answer(msg)
+        await inventory_menu(message, state)
+        return
+    
     elif message.text == "🔥 Прокачать предмет":
         items = get_inventory(message.from_user.id)
         if not items:
@@ -1013,8 +1024,18 @@ async def inv_handler(message: types.Message, state: FSMContext):
         response += "\nВведите номер предмета для прокачки:"
         await message.answer(response)
         await state.set_state(GameStates.choosing_item_to_upgrade)
+        return
+    
     else:
-        await message.answer("❌ Неизвестная команда!")
+        await message.answer(
+            "❌ Неизвестная команда!\n"
+            "Доступные команды:\n"
+            "• Экипировать [номер]\n"
+            "• Снять [слот]\n"
+            "• Продать [номер]\n"
+            "• 🔥 Прокачать предмет\n"
+            "• 🔙 Назад / 🔙 В главное меню"
+        )
 
 @dp.message(GameStates.choosing_item_to_upgrade)
 async def upgrade_item_handler(message: types.Message, state: FSMContext):
