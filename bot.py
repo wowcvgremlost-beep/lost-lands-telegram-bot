@@ -134,12 +134,13 @@ SKILLS_INFO = {
 # Магазин
 SHOP_ITEMS = {
     "potions": [
-        {"id": "potion_hp_small", "name": "🧪 Малое зелье ОЗ", "type": "Зелье", "effect": "+30 ОЗ", "price": 50},
-        {"id": "potion_hp_medium", "name": "🧪 Среднее зелье ОЗ", "type": "Зелье", "effect": "+60 ОЗ", "price": 100},
-        {"id": "potion_hp_large", "name": "🧪 Большое зелье ОЗ", "type": "Зелье", "effect": "+100 ОЗ", "price": 150},
-        {"id": "potion_mp_small", "name": "💙 Малое зелье ОД", "type": "Зелье", "effect": "+30 ОД", "price": 50},
-        {"id": "potion_mp_medium", "name": "💙 Среднее зелье ОД", "type": "Зелье", "effect": "+60 ОД", "price": 100},
-        {"id": "potion_mp_large", "name": "💙 Большое зелье ОД", "type": "Зелье", "effect": "+100 ОД", "price": 150},
+        {"id": "potion_hp_small", "name": "🧪 Малое зелье HP", "type": "Зелье", "effect": "+30 HP", "price": 50},
+        {"id": "potion_hp_medium", "name": "🧪 Среднее зелье HP", "type": "Зелье", "effect": "+60 HP", "price": 100},
+        {"id": "potion_hp_large", "name": "🧪 Большое зелье HP", "type": "Зелье", "effect": "+100 HP", "price": 150},
+        {"id": "potion_hp_huge", "name": "🧪 Большое зелье HP", "type": "Зелье", "effect": "+200 HP", "price": 300},
+        {"id": "potion_mp_small", "name": "💙 Малое зелье MP", "type": "Зелье", "effect": "+30 MP", "price": 50},
+        {"id": "potion_mp_medium", "name": "💙 Среднее зелье MP", "type": "Зелье", "effect": "+60 MP", "price": 100},
+        {"id": "potion_mp_large", "name": "💙 Большое зелье MP", "type": "Зелье", "effect": "+100 MP", "price": 150},
     ],
     "weapons": [
         {"id": "w_sword_apprentice", "name": "⚔️ Меч Ученика", "type": "Оружие 1", "effect": "+1 Сила", "price": 150, "stat": "strength", "value": 1},
